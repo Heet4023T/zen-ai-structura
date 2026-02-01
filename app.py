@@ -1,54 +1,49 @@
 import streamlit as st
-import os
 from openai import OpenAI
 import pandas as pd
 from io import BytesIO
 
-# 1. Page Config (Your Branding)
+# Branding & UI
 st.set_page_config(page_title="ZEN AI Structura", page_icon="🟢")
 st.title("🟢 ZEN AI Structura")
-st.info("Upload your bill image to generate a structured Excel report.")
+st.markdown("### Intelligent Bill Processing")
 
-# 2. Secure API Connection
-# Make sure you added GITHUB_TOKEN in Streamlit Settings > Secrets!
+# API Setup (Using Streamlit Secrets)
 client = OpenAI(
     base_url="https://models.inference.ai.azure.com",
     api_key=st.secrets["GITHUB_TOKEN"]
 )
 
-# 3. File Upload UI
-uploaded_file = st.file_uploader("Choose a bill image (JPG/PNG)", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Upload Bill Image", type=["jpg", "png", "jpeg"])
 
-if uploaded_file is not None:
-    st.image(uploaded_file, caption="Target Bill", use_container_width=True)
+if uploaded_file:
+    st.image(uploaded_file, caption="Processing Target", use_container_width=True)
     
-    if st.button("🚀 Process with GitHub Models"):
-        with st.spinner("AI is analyzing..."):
+    if st.button("🚀 Generate Excel Report"):
+        with st.spinner("AI is structured data..."):
             try:
-                # 4. AI Processing
+                # Optimized prompt for Excel structure
                 response = client.chat.completions.create(
-                    messages=[{"role": "user", "content": "Extract Date, Item Name, and Total Price from this bill. Format as a CSV style list."}],
+                    messages=[{"role": "user", "content": "Extract: Date, Merchant, Item, Price. Return ONLY raw data separated by commas. No intro text."}],
                     model="gpt-4o",
                 )
-                ai_result = response.choices[0].message.content
                 
-                # 5. Conversion to Excel
-                # We split the AI text into a table format
-                rows = [line.split(',') for line in ai_result.strip().split('\n')]
-                df = pd.DataFrame(rows)
+                # Logic to convert AI text to a real Excel file
+                raw_data = response.choices[0].message.content
+                rows = [line.split(',') for line in raw_data.strip().split('\n')]
+                df = pd.DataFrame(rows, columns=['Date', 'Merchant', 'Item', 'Price'])
                 
+                # Memory buffer for the file
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df.to_excel(writer, index=False, header=False)
+                    df.to_excel(writer, index=False)
                 
-                st.success("Analysis Complete!")
-                
-                # 6. The Download Button
+                st.success("Success! Your structured report is ready.")
                 st.download_button(
-                    label="📥 Download Excel Report",
+                    label="📥 Download .xlsx Report",
                     data=output.getvalue(),
-                    file_name="bill_analysis.xlsx",
+                    file_name="ZEN_Bill_Report.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             except Exception as e:
-                st.error(f"Error: {str(e)}")
+                st.error(f"Logic Error: {e}")
