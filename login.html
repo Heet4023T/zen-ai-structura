@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Log In - Structura</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='index.css') }}">
+    <style>
+        /* Main Layout Styles */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0f172a; /* Ensure background matches your theme */
+            font-family: 'Inter', sans-serif;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 40px;
+            /* Header stays at the top */
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: #22c55e;
+        }
+
+        /* Centering the Login Box */
+        .auth-container { 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            min-height: 80vh; /* Takes up most of the screen height */
+            flex-direction: column; 
+        }
+
+        .auth-box { 
+            background: rgba(30, 41, 59, 0.7); 
+            border: 1px solid #334155; 
+            padding: 40px; 
+            border-radius: 16px; 
+            width: 100%; 
+            max-width: 400px; 
+            text-align: center; 
+        }
+
+        .auth-box h2 { margin-bottom: 20px; color: #fff; margin-top: 0; }
+        
+        .input-group { margin-bottom: 15px; text-align: left; }
+        .input-group label { display: block; color: #cbd5e1; margin-bottom: 5px; font-size: 0.9rem; }
+        .input-group input { 
+            width: 100%; 
+            padding: 12px; 
+            background: #0f172a; 
+            border: 1px solid #334155; 
+            border-radius: 8px; 
+            color: #fff; 
+            outline: none; 
+            box-sizing: border-box; /* Fixes padding width issues */
+        }
+        .input-group input:focus { border-color: #22c55e; }
+
+        .auth-btn { width: 100%; padding: 12px; background: #22c55e; color: #052e16; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; margin-top: 10px; }
+        .auth-btn:hover { background: #16a34a; }
+
+        .switch-link { margin-top: 15px; display: block; color: #94a3b8; font-size: 0.9rem; }
+        .switch-link a { color: #22c55e; text-decoration: none; }
+
+        /* Alert Styles */
+        .alert { padding: 12px; border-radius: 8px; margin-bottom: 20px; width: 100%; max-width: 400px; text-align: center; }
+        .alert-danger { background: rgba(220, 38, 38, 0.2); color: #f87171; border: 1px solid #dc2626; }
+        .alert-success { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid #22c55e; }
+        .alert-warning { background: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid #eab308; }
+    </style>
+</head>
+<body>
+
+    <header class="header">
+        <div class="logo">
+            <svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M12 0H4a2 2 0 0 0-2 2v4h12V2a2 2 0 0 0-2-2m2 7h-4v2h4zm0 3h-4v2h4zm0 3h-4v3h2a2 2 0 0 0 2-2zm-5 3v-3H6v3zm-4 0v-3H2v1a2 2 0 0 0 2 2zm-3-4h3v-2H2zm0-3h3V7H2zm4 0V7h3v2zm0 1h3v2H6z"/>
+            </svg>
+            <span>ZEN AI Structura</span>
+        </div>
+    </header>
+
+    <div class="auth-container">
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        
+        <div class="auth-box">
+            <h2>Welcome Back</h2>
+            <form method="POST">
+                <div class="input-group">
+                    <label>Email Address</label>
+                    <input type="email" name="email" required>
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <input type="password" name="password" required>
+                </div>
+                <button type="submit" class="auth-btn">Log In</button>
+            </form>
+            <span class="switch-link">Don't have an account? <a href="/signup">Sign Up</a></span>
+        </div>
+    </div>
+
+</body>
+</html>
