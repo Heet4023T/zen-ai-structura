@@ -27,7 +27,7 @@ LAST_GENERATED_FILE = None
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'FINAL_VISUAL_FIX_V17_RENDER' 
+app.config['SECRET_KEY'] = 'FINAL_VISUAL_FIX_V18_FORCED_BOX' 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=30)
@@ -131,11 +131,10 @@ def parse_invoice_vision(image_path, user_instruction=""):
     Extract data into JSON. USER INSTRUCTION: "{user_instruction}"
     
     RULES:
-    1. **PERSONAL**: If input is just text like "paid 500", set "layout": "personal".
+    1. **PERSONAL**: If input is just text, set "layout": "personal".
     2. **BUSINESS**: If input is an image, set "layout": "business".
-       - **COMPANY NAME**: Extract top title (e.g., "Sharma Enterprises").
-       - **INVOICE NO**: Look for "Inv No", "Invoice #", or "Bill No".
-       - **DATE**: Extract Invoice Date.
+       - **COMPANY NAME**: Extract title (e.g. "Sharma Enterprises").
+       - **INVOICE NO**: Look for "Inv No", "Invoice #".
     
     JSON STRUCTURE:
     {{
@@ -155,20 +154,20 @@ def parse_invoice_vision(image_path, user_instruction=""):
     return recalculate_math(json.loads(json_str, strict=False))
 
 # ==============================================================================
-# 5. EXCEL LAYOUTS (STRICTLY ENFORCED VISUALS)
+# 5. EXCEL LAYOUTS (FORCED STRUCTURE)
 # ==============================================================================
 def draw_box(ws, cell_range, value, font=None, align=None, fill=None, border=None):
+    """ Helper to force draw merged cells with styles even if value is missing """
     ws.merge_cells(cell_range)
-    top_left_cell = ws[cell_range.split(':')[0]]
-    top_left_cell.value = value
-    if font: top_left_cell.font = font
-    if align: top_left_cell.alignment = align
-    if fill: top_left_cell.fill = fill
+    top_left = ws[cell_range.split(':')[0]]
+    top_left.value = value
+    if font: top_left.font = font
+    if align: top_left.alignment = align
+    if fill: top_left.fill = fill
     
-    # Apply border to the entire merged range box
+    # Apply border to entire box
     if border:
         rows = ws[cell_range]
-        if not isinstance(rows, tuple): rows = (rows,)
         for row in rows:
             for c in row: c.border = border
 
@@ -182,7 +181,9 @@ def write_business_layout(ws, data):
     box_border = Border(left=Side(style='medium'), right=Side(style='medium'), top=Side(style='medium'), bottom=Side(style='medium'))
     
     # 1. ORANGE HEADER (FORCED)
-    draw_box(ws, 'A1:H1', clean(head.get("company_name")) or "SHARMA ENTERPRISES", 
+    # Even if company name is missing, this box will appear with orange bg
+    comp_name = clean(head.get("company_name")) or "INVOICE"
+    draw_box(ws, 'A1:H1', comp_name, 
              font=Font(size=22, bold=True), align=center, 
              fill=PatternFill(start_color="FFCC99", end_color="FFCC99", fill_type="solid"), border=box_border)
     
@@ -191,14 +192,14 @@ def write_business_layout(ws, data):
     if clean(head.get("gstin")): subtext += f" | GSTIN: {clean(head.get('gstin'))}"
     draw_box(ws, 'A2:H2', subtext, align=center, border=box_border)
 
-    # 3. DETAILS GRID
+    # 3. DETAILS GRID (FORCED)
     draw_box(ws, 'A3:D3', f"To: {clean(head.get('buyer_name'))}", font=Font(bold=True), align=left, border=box_border)
     draw_box(ws, 'E3:H3', f"Inv No: {clean(head.get('invoice_no'))}", font=Font(bold=True), align=center, border=box_border)
     
     draw_box(ws, 'A4:D4', clean(head.get('buyer_address')) or "Address", align=left, border=box_border)
     draw_box(ws, 'E4:H4', f"Date: {clean(head.get('date'))}", align=center, border=box_border)
 
-    # 4. BANK DETAILS (FORCED DRAWING)
+    # 4. BANK DETAILS (FORCED)
     bank = head.get("bank_details", {})
     draw_box(ws, 'A5:B5', "Bank Details:", font=Font(bold=True), align=left, border=box_border)
     bank_str = f"{clean(bank.get('bank_name'))} | A/c: {clean(bank.get('acc_no'))} | IFSC: {clean(bank.get('ifsc'))}"
@@ -209,7 +210,7 @@ def write_business_layout(ws, data):
     for i, h in enumerate(headers, 1):
         c = ws.cell(row=6, column=i, value=h)
         c.font = Font(bold=True); c.alignment = center; c.border = box_border
-        ws.column_dimensions[get_column_letter(i)].width = 15 if i != 2 else 40 # Wider for Particulars
+        ws.column_dimensions[get_column_letter(i)].width = 15 if i != 2 else 40
     
     # 6. ITEMS
     curr = 7
@@ -223,17 +224,18 @@ def write_business_layout(ws, data):
     # 7. TOTAL & FOOTER
     draw_box(ws, f'A{curr}:G{curr}', "Total Amount (Inc. GST)", font=Font(bold=True), align=right, border=box_border)
     ws.cell(row=curr, column=8, value=clean(foot.get("total_amount"))).font = Font(bold=True)
-    ws.cell(row=curr, column=8).border = box_border
-    ws.cell(row=curr, column=8).alignment = right
+    ws.cell(row=curr, column=8).border = box_border; ws.cell(row=curr, column=8).alignment = right
     
     curr += 1
+    # Words
     draw_box(ws, f'A{curr}:H{curr}', f"Amount in Words: {clean(foot.get('amount_in_words'))}", font=Font(italic=True, bold=True), align=left, border=box_border)
     
     curr += 1
-    draw_box(ws, f'F{curr}:H{curr}', "Authorized Signature", font=Font(bold=True), align=right, border=None)
+    # SIGNATURE BOX (FORCED DRAW)
+    draw_box(ws, f'F{curr}:H{curr}', "Authorized Signature", font=Font(bold=True), align=right, border=box_border)
 
 def write_personal_layout(ws, data):
-    # Keep your exact Personal Layout logic here
+    # Personal Layout Logic
     items, foot = data.get("items", []), data.get("footer", {})
     ws['A1'] = "EXPENSE SHEET"; ws['A1'].font = Font(size=16, bold=True)
     headers = ["Description", "Quantity", "Rate", "Amount"]
@@ -293,7 +295,7 @@ def input_page():
 @app.route("/process", methods=["POST"])
 def process():
     if not current_user.is_authenticated and session.get('usage_count', 0) >= 3:
-        return jsonify({"error": "3 trials ended now do log in"}), 403
+        return jsonify({"error": "3 trials ended, please log in"}), 403
     
     file = request.files.get("image")
     prompt_text = request.form.get("prompt", "")
