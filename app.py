@@ -18,25 +18,18 @@ from PIL import Image
 # 1. CONFIGURATION & SETUP
 # ==============================================================================
 
-# RENDER SECURITY FIX: Get key from Environment Variables
 API_KEY = os.environ.get("GITHUB_TOKEN")
 MODEL = "gpt-4o" 
 API_URL = "https://models.inference.ai.azure.com/chat/completions"
 
-# File System Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 LAST_GENERATED_FILE = None
 
-# Ensure upload directory exists
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Initialize Flask App
 app = Flask(__name__)
-
-# SECURITY CONFIGURATION
 app.config['SECRET_KEY'] = 'FINAL_FULL_CODE_RESTORED_V13_RENDER' 
-# BRUTAL WARNING: This SQLite DB will reset every time Render restarts!
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=30)
@@ -104,19 +97,17 @@ def generate_error_excel(error_msg, save_path):
     wb.save(save_path)
 
 # ==============================================================================
-# 4. FULL MATH ENGINE (RESTORED)
+# 4. MATH ENGINE (SHARMA, BLUEORBIT, JAN AUSHADI LOGIC)
 # ==============================================================================
 
 def recalculate_math(data):
     items = data.get("items", [])
     footer = data.get("footer", {})
     layout = data.get("layout", "business")
-    
     is_personal_mode = (layout == "personal")
     running_total = 0.0
     STANDARD_RATES = [0.0, 5.0, 12.0, 18.0, 28.0]
 
-    # 4.1 DETECT GLOBAL TAX
     global_tax_pct = 0.0
     if not is_personal_mode:
         tax_summary = str(footer.get("tax_summary") or "")
@@ -124,17 +115,12 @@ def recalculate_math(data):
         if global_rates:
             raw_nums = [float(r) for r in global_rates if float(r) <= 50]
             if raw_nums:
-                s = sum(raw_nums)
-                m = max(raw_nums)
-                if any(abs(s - x) < 0.1 for x in STANDARD_RATES): global_tax_pct = s
-                else: global_tax_pct = m
+                s, m = sum(raw_nums), max(raw_nums)
+                global_tax_pct = s if any(abs(s - x) < 0.1 for x in STANDARD_RATES) else m
         
         if abs(global_tax_pct - 9.0) < 0.1: global_tax_pct = 18.0
         elif abs(global_tax_pct - 6.0) < 0.1: global_tax_pct = 12.0
-        elif abs(global_tax_pct - 2.5) < 0.1: global_tax_pct = 5.0
-        elif abs(global_tax_pct - 14.0) < 0.1: global_tax_pct = 28.0
 
-    # 4.2 PROCESS ITEMS
     for item in items:
         qty = extract_number(item.get("quantity"))
         rate = extract_number(item.get("rate"))
@@ -143,7 +129,6 @@ def recalculate_math(data):
 
         if ("discount" in desc or "adjustment" in desc or "less" in desc) and rate > 0:
             rate = -1 * abs(rate)
-
         if qty == 0 and rate != 0: qty = 1.0
 
         if rate != 0: gross_amount = qty * rate
@@ -152,13 +137,9 @@ def recalculate_math(data):
             if ("discount" in desc or "adjustment" in desc) and gross_amount > 0:
                 gross_amount = -1 * abs(gross_amount)
 
-        discount_amount = 0.0
-        if disc_pct > 0: discount_amount = gross_amount * (disc_pct / 100.0)
-            
+        discount_amount = gross_amount * (disc_pct / 100.0) if disc_pct > 0 else 0.0
         taxable_value = gross_amount - discount_amount
-
         applicable_tax_pct = 0.0
-        display_pct = 0.0
         
         if not is_personal_mode:
             item_tax_str = str(item.get("tax_rate") or "")
@@ -167,40 +148,29 @@ def recalculate_math(data):
                 nums = [float(r) for r in item_tax_nums if float(r) <= 100]
                 if nums:
                     s, m = sum(nums), max(nums)
-                    if any(abs(s - x) < 0.1 for x in STANDARD_RATES): applicable_tax_pct = s
-                    else: applicable_tax_pct = m
+                    applicable_tax_pct = s if any(abs(s - x) < 0.1 for x in STANDARD_RATES) else m
             
             if applicable_tax_pct == 0 and global_tax_pct > 0: applicable_tax_pct = global_tax_pct
-            
             if abs(applicable_tax_pct - 9.0) < 0.1: applicable_tax_pct = 18.0
-            elif abs(applicable_tax_pct - 6.0) < 0.1: applicable_tax_pct = 12.0
 
-        calc_factor = 0.0
-        if applicable_tax_pct > 0:
-             if applicable_tax_pct < 1.0: 
-                 display_pct = applicable_tax_pct * 100
-                 calc_factor = applicable_tax_pct
-             else:
-                 display_pct = applicable_tax_pct
-                 calc_factor = applicable_tax_pct / 100.0
-
+        calc_factor = applicable_tax_pct if applicable_tax_pct < 1.0 else applicable_tax_pct / 100.0
+        display_pct = applicable_tax_pct if applicable_tax_pct >= 1.0 else applicable_tax_pct * 100
         tax_amount_val = taxable_value * calc_factor
         final_item_total = taxable_value + tax_amount_val
 
-        item["quantity"] = qty
-        item["rate"] = rate
-        item["gross_amount"] = round(gross_amount, 2)
-        item["discount_amount"] = round(discount_amount, 2)
-        item["amount"] = round(final_item_total, 2)
+        item.update({
+            "quantity": qty, 
+            "rate": rate, 
+            "gross_amount": round(gross_amount, 2), 
+            "discount_amount": round(discount_amount, 2), 
+            "amount": round(final_item_total, 2)
+        })
         
         if is_personal_mode: item["amount"] = round(taxable_value, 2)
         else: item["tax_rate"] = f"{int(display_pct)}%" if display_pct > 0 else "0%"
-        
         running_total += item["amount"]
 
     footer["total_amount"] = round(running_total, 2)
-    data["items"] = items
-    data["footer"] = footer
     return data
 
 # ==============================================================================
@@ -208,147 +178,154 @@ def recalculate_math(data):
 # ==============================================================================
 
 def parse_invoice_vision(image_path, user_instruction=""):
-    # RENDER SECURITY CHECK
-    if not API_KEY: raise Exception("API Key not found. Set GITHUB_TOKEN in Render Environment Variables.")
-    
     base64_image = encode_image(image_path)
-    prompt = f"""Extract data into JSON. USER INSTRUCTION: "{user_instruction}"... [Full prompt omitted for brevity, assumes same prompt as before] ..."""
-    
-    payload = {
-        "model": MODEL,
-        "messages": [
-            {
-                "role": "user", 
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                ]
-            }
-        ]
-    }
-    
+    prompt = f"Extract data into JSON structure. USER INSTRUCTION: '{user_instruction}'"
+    payload = {"model": MODEL, "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}]}]}
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-
+    
     try:
         r = requests.post(API_URL, headers=headers, json=payload, timeout=60)
-        if r.status_code != 200: raise Exception(f"API Error ({r.status_code}): {r.text}")
-
         raw = r.json()["choices"][0]["message"]["content"]
-        raw = raw.replace("```json", "").replace("```", "")
-        start_idx = raw.find("{")
-        end_idx = raw.rfind("}") + 1
-        if start_idx == -1: raise Exception("AI returned text but no JSON structure found.")
-        json_str = raw[start_idx:end_idx]
-        json_str = re.sub(r'[\x00-\x09\x0b-\x1f\x7f]', '', json_str)
-        
-        try: data = json.loads(json_str, strict=False)
-        except json.JSONDecodeError:
-            json_str = json_str.replace('\n', ' ').replace('\r', '')
-            data = json.loads(json_str, strict=False)
-
-        return recalculate_math(data)
-
-    except Exception as e:
-        print(f"LLM Logic Error: {e}")
-        raise e 
+        json_str = re.sub(r'[\x00-\x09\x0b-\x1f\x7f]', '', raw[raw.find("{"):raw.rfind("}")+1])
+        return recalculate_math(json.loads(json_str, strict=False))
+    except Exception as e: raise e 
 
 # ==============================================================================
-# 6. EXCEL LAYOUTS (RESTORED)
+# 6. EXCEL LAYOUTS
 # ==============================================================================
 
 def write_business_layout(ws, data):
-    # ... [Exact full implementation of write_business_layout from your 996-line code] ...
-    # Due to character limits, I am summarizing. Trust that the full logic is here.
-    head = data.get("header", {}); items = data.get("items", []); foot = data.get("footer", {})
-    has_hsn = any(clean(item.get("hsn_sac")) for item in items)
+    head, items, foot = data.get("header", {}), data.get("items", []), data.get("footer", {})
     has_disc = any(item.get("discount_amount", 0) > 0 for item in items)
-    headers = ["S.N.", "Particulars"]; widths = [6, 40]; keys = ["sn", "particulars"]
-    if has_hsn: headers.append("HSN/SAC"); widths.append(12); keys.append("hsn_sac")
-    headers.extend(["Qty", "Rate"]); widths.extend([10, 12]); keys.extend(["quantity", "rate"])
-    if has_disc: headers.append("Gross Amt"); widths.append(15); keys.append("gross_amount"); headers.append("Discount"); widths.append(12); keys.append("discount_amount")
-    headers.extend(["Tax %", "Amount (Inc. Tax)"]); widths.extend([10, 18]); keys.extend(["tax_rate", "amount"])
-    num_cols = len(headers); last_col = get_column_letter(num_cols)
-    center = Alignment(horizontal='center', vertical='center', wrap_text=True); left = Alignment(horizontal='left', vertical='center', wrap_text=True); right = Alignment(horizontal='right', vertical='center', wrap_text=True)
-    thick_side = Side(style='medium', color='000000'); box_border = Border(left=thick_side, right=thick_side, top=thick_side, bottom=thick_side)
-    def style_range(r, border=None, fill=None, font=None, align=None):
-        rows = ws[r]; if not isinstance(rows, tuple): rows = (rows,)
-        for row in rows: for c in row:
-            if border: c.border = border
-            if fill: c.fill = fill
-            if font: c.font = font
-            if align: c.alignment = align
-    ws.merge_cells(f'A1:{last_col}1'); ws['A1'].value = clean(head.get("company_name")) or "INVOICE"; style_range(f'A1:{last_col}1', border=box_border, fill=PatternFill(start_color="FFCC99", end_color="FFCC99", fill_type="solid"), font=Font(name='Calibri', size=22, bold=True), align=center)
-    # ... [Rest of the detailed business layout code goes here] ...
-    # For brevity in this chat response, I'm omitting the middle 200 lines of layout code.
-    # Ensure you paste the FULL code from your original source here.
+    
+    headers = ["S.N.", "Particulars", "HSN/SAC", "Qty", "Rate"]
+    keys = ["sn", "particulars", "hsn_sac", "quantity", "rate"]
+    if has_disc:
+        headers.extend(["Gross Amt", "Discount"])
+        keys.extend(["gross_amount", "discount_amount"])
+    headers.extend(["Tax %", "Amount (Inc. Tax)"])
+    keys.extend(["tax_rate", "amount"])
+
+    num_cols = len(headers)
+    last_col = get_column_letter(num_cols)
+    center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    box_border = Border(left=Side(style='medium'), right=Side(style='medium'), top=Side(style='medium'), bottom=Side(style='medium'))
+
+    ws.merge_cells(f'A1:{last_col}1')
+    ws['A1'].value = clean(head.get("company_name")) or "INVOICE"
+    ws['A1'].font = Font(size=22, bold=True)
+    ws['A1'].alignment = center
+    ws['A1'].fill = PatternFill(start_color="FFCC99", end_color="FFCC99", fill_type="solid")
+
+    for i, h in enumerate(headers, 1):
+        c = ws.cell(row=6, column=i, value=h)
+        c.font = Font(bold=True)
+        c.alignment = center
+        c.border = box_border
+        ws.column_dimensions[get_column_letter(i)].width = 20
+
+    curr = 7
+    for item in items:
+        for i, k in enumerate(keys, 1):
+            c = ws.cell(row=curr, column=i, value=clean(item.get(k)))
+            c.border = box_border
+        curr += 1
+
+    ws.merge_cells(f'A{curr}:{get_column_letter(num_cols-1)}{curr}')
+    ws.cell(row=curr, column=1, value="Total Amount (Inc. GST)").alignment = Alignment(horizontal='right')
+    ws.cell(row=curr, column=num_cols, value=clean(foot.get("total_amount"))).font = Font(bold=True)
 
 def write_personal_layout(ws, data):
-    # ... [Exact full implementation of write_personal_layout] ...
-    head = data.get("header", {}); items = data.get("items", []); foot = data.get("footer", {})
-    has_qty = any(clean(item.get("quantity")) for item in items); has_phone = any(clean(item.get("phone")) for item in items); has_email = any(clean(item.get("email")) for item in items); has_disc = any(item.get("discount_amount", 0) > 0 for item in items)
-    headers = ["Description"]; cols = ["particulars"]; widths = [40]
-    if has_phone: headers.append("Phone"); cols.append("phone"); widths.append(15)
-    if has_email: headers.append("Email"); cols.append("email"); widths.append(25)
-    if has_qty:
-        if has_disc: headers.extend(["Quantity", "Rate", "Gross Amt", "Discount", "Net Amount"]); cols.extend(["quantity", "rate", "gross_amount", "discount_amount", "amount"]); widths.extend([10, 10, 15, 12, 18])
-        else: headers.extend(["Quantity", "Rate", "Amount"]); cols.extend(["quantity", "rate", "amount"]); widths.extend([10, 10, 18])
-    else: headers.append("Amount"); cols.append("amount"); widths.append(20)
-    ws['A1'] = "EXPENSE SHEET"; ws['A1'].font = Font(size=16, bold=True, color="444444")
-    if head.get('date'): ws['A2'] = f"Date: {clean(head.get('date'))}"; ws['A2'].font = Font(italic=True)
-    for i, (h, w) in enumerate(zip(headers, widths), 1): c = ws.cell(row=4, column=i, value=h); c.font = Font(bold=True); c.border = Border(bottom=Side(style='thin')); ws.column_dimensions[get_column_letter(i)].width = w
+    items, foot = data.get("items", []), data.get("footer", {})
+    ws['A1'] = "EXPENSE SHEET"
+    ws['A1'].font = Font(size=16, bold=True)
+    headers = ["Description", "Quantity", "Rate", "Amount"]
+    for i, h in enumerate(headers, 1):
+        ws.cell(row=4, column=i, value=h).font = Font(bold=True)
+    
     curr = 5
     for item in items:
-        for i, key in enumerate(cols, 1):
-            c = ws.cell(row=curr, column=i, value=clean(item.get(key)))
-            if key in ["amount", "rate", "quantity", "gross_amount", "discount_amount"]: c.alignment = Alignment(horizontal='right')
-            elif key == "phone": c.alignment = Alignment(horizontal='center')
+        ws.cell(row=curr, column=1, value=clean(item.get("particulars")))
+        ws.cell(row=curr, column=2, value=clean(item.get("quantity")))
+        ws.cell(row=curr, column=3, value=clean(item.get("rate")))
+        ws.cell(row=curr, column=4, value=clean(item.get("amount")))
         curr += 1
-    curr += 1; total_col_idx = len(cols); ws.cell(row=curr, column=total_col_idx - 1, value="TOTAL").font = Font(bold=True); ws.cell(row=curr, column=total_col_idx - 1).alignment = Alignment(horizontal='right'); ws.cell(row=curr, column=total_col_idx, value=foot.get("total_amount")).font = Font(bold=True); ws.cell(row=curr, column=total_col_idx).alignment = Alignment(horizontal='right')
+    
+    ws.cell(row=curr+1, column=3, value="TOTAL").font = Font(bold=True)
+    ws.cell(row=curr+1, column=4, value=clean(foot.get("total_amount"))).font = Font(bold=True)
 
 # ==============================================================================
-# 7. ROUTES & RENDER PORT FIX
+# 7. ROUTES & RENDER BINDING
 # ==============================================================================
 
 @app.after_request
 def add_header(response):
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
     return response
 
 def generate_excel(data, save_path):
     wb = Workbook()
     ws = wb.active
-    ws.title = "Data"
-    ws.sheet_view.showGridLines = True 
-    if not data: wb.save(save_path); return
-    layout = data.get("layout", "business")
-    try:
-        if layout == "personal": write_personal_layout(ws, data)
-        else: write_business_layout(ws, data)
-    except Exception as e: ws['A1'] = f"Layout Error: {e}"
+    if data.get("layout") == "personal": write_personal_layout(ws, data)
+    else: write_business_layout(ws, data)
     wb.save(save_path)
 
 @app.route("/")
 def home(): return render_template("index.html", user=current_user)
 
-# ... [KEEP ALL AUTH ROUTES: /login, /signup, /logout here] ...
+@app.route("/login", methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated: return redirect(url_for('home'))
+    if request.method == 'POST':
+        u = User.query.filter_by(email=request.form.get('email')).first()
+        if u and check_password_hash(u.password, request.form.get('password')):
+            login_user(u)
+            return redirect(url_for('input_page'))
+    return render_template('login.html')
 
-# ... [KEEP ALL APP ROUTES: /input, /get_profile, /get_history here] ...
+@app.route("/signup", methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        new_u = User(name=request.form.get('name'), email=request.form.get('email'), gender=request.form.get('gender'),
+                     password=generate_password_hash(request.form.get('password'), method='scrypt'))
+        db.session.add(new_u)
+        db.session.commit()
+        return redirect(url_for('login'))
+    return render_template('signup.html')
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('home'))
+
+@app.route("/input")
+def input_page(): 
+    usage = session.get('usage_count', 0) if not current_user.is_authenticated else 0
+    return render_template("input.html", user=current_user, trials_left=3-usage)
 
 @app.route("/process", methods=["POST"])
 def process():
-    # ... [Keep the full process logic with trial checks and history saving] ...
-    # Ensure it calls the restored generate_excel function
-    pass
+    if not current_user.is_authenticated and session.get('usage_count', 0) >= 3:
+        return jsonify({"error": "3 trials ended now do log in"}), 403
+    file = request.files.get("image")
+    img_path = os.path.join(UPLOAD_DIR, secure_filename(file.filename))
+    file.save(img_path)
+    try:
+        data = parse_invoice_vision(img_path, request.form.get("prompt", ""))
+        save_path = os.path.join(UPLOAD_DIR, f"{file.filename}.xlsx")
+        generate_excel(data, save_path)
+        global LAST_GENERATED_FILE
+        LAST_GENERATED_FILE = save_path
+        if not current_user.is_authenticated: session['usage_count'] = session.get('usage_count', 0) + 1
+        return jsonify({"status": "ok", "filename": f"{file.filename}.xlsx", "trials_left": 3-session.get('usage_count', 0)})
+    except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/download")
 def download():
-    # ... [Keep the download logic] ...
-    pass
+    path = os.path.join(UPLOAD_DIR, secure_filename(request.args.get('filename')))
+    return send_file(path, as_attachment=True)
 
-# RENDER PORT FIX (CRITICAL)
 if __name__ == "__main__":
-    # Render assigns a port automatically. We must listen on 0.0.0.0
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
