@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Structura – Input</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='input.css') }}">
+<style>
+    .user-avatar { width: 35px; height: 35px; background-color: #22c55e; color: #052e16; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-weight: 700; margin-right: 15px; cursor: pointer; position: relative; }
+    .dropdown-content { display: none; position: absolute; top: 60px; right: 40px; background-color: #1e293b; min-width: 160px; box-shadow: 0px 8px 16px rgba(0,0,0,0.2); z-index: 100; border-radius: 8px; overflow: hidden; border: 1px solid #334155; }
+    .dropdown-content a { color: #e2e8f0; padding: 12px 16px; text-decoration: none; display: flex; align-items: center; gap: 10px; font-size: 0.9rem; }
+    .dropdown-content a:hover { background-color: #334155; }
+    .show { display: block; }
+    .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
+    .modal-content { background-color: #0f172a; margin: 10% auto; padding: 30px; border: 1px solid #334155; width: 90%; max-width: 500px; border-radius: 12px; color: #fff; position: relative; text-align: left; }
+    .close-modal { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+    .close-modal:hover { color: #fff; }
+  .history-item {
+    background: #1e293b;
+    padding: 15px;
+    margin-bottom: 10px;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+#historyList {
+    margin-top: 20px;
+    max-height: 300px;
+    overflow-y: auto;
+    padding-right: 10px; /* THIS FIXES THE ISSUE: Adds gap between box and scrollbar */
+}
+    .history-info h4 { margin: 0 0 5px 0; color: #22c55e; font-size: 0.95rem; }
+    .history-info p { margin: 0; font-size: 0.8rem; color: #94a3b8; }
+    .restore-btn { background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
+    .restore-btn:hover { background: #2563eb; }
+    .delete-btn { position: absolute; top: 10px; right: 10px; background-color: #ef4444; color: white; width: 18px; height: 18px; border-radius: 50%; cursor: pointer; z-index: 10; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: background-color 0.2s; display: none; justify-content: center; align-items: center; padding: 0; }
+    .delete-btn:hover { background-color: #dc2626; }
+    .delete-btn svg { display: block; }
+</style>
+<script>window.onpageshow = function(event) { if (event.persisted) { window.location.reload(); } };</script>
+</head>
+<body>
+<div class="app">
+<header class="header">
+  <div class="logo">
+     <svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" fill="currentColor" viewBox="0 0 16 16"><path d="M12 0H4a2 2 0 0 0-2 2v4h12V2a2 2 0 0 0-2-2m2 7h-4v2h4zm0 3h-4v2h4zm0 3h-4v3h2a2 2 0 0 0 2-2zm-5 3v-3H6v3zm-4 0v-3H2v1a2 2 0 0 0 2 2zm-3-4h3v-2H2zm0-3h3V7H2zm4 0V7h3v2zm0 1h3v2H6z"/></svg>
+    <span>ZEN AI Structura</span>
+  </div>
+  <div class="nav-right">
+      {% if user %}
+         <div class="user-avatar" onclick="toggleDropdown()">{{ user.name[0] | upper }}</div>
+         <div id="userDropdown" class="dropdown-content">
+            <a href="#" onclick="openProfile()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6"/></svg> Profile
+            </a>
+            <a href="#" onclick="openHistory()">
+                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-clock-history" viewBox="0 0 16 16">
+  <path d="M8.515 1.019A7 7 0 0 0 8 1V0a8 8 0 0 1 .589.022zm2.004.45a7 7 0 0 0-.985-.299l.219-.976q.576.129 1.126.342zm1.37.71a7 7 0 0 0-.439-.27l.493-.87a8 8 0 0 1 .979.654l-.615.789a7 7 0 0 0-.418-.302zm1.834 1.79a7 7 0 0 0-.653-.796l.724-.69q.406.429.747.91zm.744 1.352a7 7 0 0 0-.214-.468l.893-.45a8 8 0 0 1 .45 1.088l-.95.313a7 7 0 0 0-.179-.483m.53 2.507a7 7 0 0 0-.1-1.025l.985-.17q.1.58.116 1.17zm-.131 1.538q.05-.254.081-.51l.993.123a8 8 0 0 1-.23 1.155l-.964-.267q.069-.247.12-.501m-.952 2.379q.276-.436.486-.908l.914.405q-.24.54-.555 1.038zm-.964 1.205q.183-.183.35-.378l.758.653a8 8 0 0 1-.401.432z"/>
+  <path d="M8 1a7 7 0 1 0 4.95 11.95l.707.707A8.001 8.001 0 1 1 8 0z"/>
+  <path d="M7.5 3a.5.5 0 0 1 .5.5v5.21l3.248 1.856a.5.5 0 0 1-.496.868l-3.5-2A.5.5 0 0 1 7 9V3.5a.5.5 0 0 1 .5-.5"/>
+</svg> History
+            </a>
+            <a href="/logout">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M10 12.5a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v2a.5.5 0 0 0 1 0v-2A1.5 1.5 0 0 0 9.5 2h-8A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-2a.5.5 0 0 0-1 0z"/><path fill-rule="evenodd" d="M15.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708.708L14.293 7.5H5.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708z"/></svg> Log Out
+            </a>
+         </div>
+      {% else %}
+         <span class="trial-info" id="trial-counter">{{ trials_left }} free trials left</span>
+         <button class="login-btn" onclick="window.location.href='/login'">Log In</button>
+      {% endif %}
+  </div>
+</header>
+<main class="input-container">
+<h1>Add your data</h1>
+<p>Make bill via prompt, Upload a bill, type a prompt, or speak — Structura will handle the rest.</p>
+<div class="card">
+    <label class="label">Upload Image / Bill</label>
+    <div style="position: relative;">
+        <div class="upload-box" onclick="document.getElementById('imageInput').click()">
+            <div class="upload-icon">📄</div>
+            <div class="upload-text"><strong>Click to upload bill</strong><span id="fileName">PNG, JPG supported</span></div>
+        </div>
+        <div id="deleteFileBtn" class="delete-btn" onclick="removeFile(event)" title="Delete file">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/></svg>
+        </div>
+    </div>
+    <input type="file" id="imageInput" accept="image/*" hidden>
+    <input type="hidden" id="restoredFilename">
+</div>
+<div class="card">
+    <label class="label">Enter Prompt (optional)</label>
+    <textarea id="prompt" placeholder="e.g. paid zomato 480 yesterday night via upi office food"></textarea>
+    <div class="speech-row"><button class="speech-btn" type="button" onclick="startVoice()">🎤 Speak</button><span id="mic-status">Tap to speak</span></div>
+</div>
+<button class="primary-btn" onclick="sendData()">Process to Excel</button>
+<button type="button" class="reset-btn" onclick="clearAll()">Start Again</button>
+<div id="profileModal" class="modal"><div class="modal-content"><span class="close-modal" onclick="closeModals()">&times;</span><h2 style="color:#22c55e;">Profile Overview</h2><div id="profileData" style="margin-top: 20px; line-height: 1.8;">Loading...</div></div></div>
+<div id="historyModal" class="modal"><div class="modal-content"><span class="close-modal" onclick="closeModals()">&times;</span><h2 style="color:#22c55e;">Your History</h2><div id="historyList" style="margin-top: 20px; max-height: 300px; overflow-y: auto;">Loading...</div></div></div>
+</main>
+</div>
+<script src="{{ url_for('static', filename='input.js') }}"></script>
+<script>
+    function toggleDropdown() { document.getElementById("userDropdown").classList.toggle("show"); }
+    window.onclick = function(e) { if (!e.target.matches('.user-avatar')) { var d = document.getElementById("userDropdown"); if (d && d.classList.contains('show')) d.classList.remove('show'); } if (e.target.classList.contains('modal')) closeModals(); }
+    function closeModals() { document.getElementById("profileModal").style.display = "none"; document.getElementById("historyModal").style.display = "none"; }
+    async function openProfile() { document.getElementById("profileModal").style.display = "block"; try { const res = await fetch('/get_profile'); const data = await res.json(); document.getElementById("profileData").innerHTML = `<strong>Name:</strong> ${data.name}<br><strong>Email:</strong> ${data.email}<br><strong>Gender:</strong> ${data.gender}`; } catch(e) { document.getElementById("profileData").innerText = "Error loading profile."; } }
+    async function openHistory() { document.getElementById("historyModal").style.display = "block"; const container = document.getElementById("historyList"); container.innerHTML = "Loading..."; try { const res = await fetch('/get_history'); const list = await res.json(); container.innerHTML = ""; if(list.length === 0) { container.innerHTML = "<p style='color:#94a3b8;'>No history found.</p>"; return; } list.forEach(item => { const div = document.createElement("div"); div.className = "history-item"; 
+        // ENCODED FOR SAFETY
+        const safeFile = encodeURIComponent(item.filename || ''); 
+        const safePrompt = encodeURIComponent(item.prompt || '');
+        div.innerHTML = `<div class="history-info"><h4>${item.date}</h4><p>${item.filename || 'No File'} | ${item.prompt ? item.prompt.substring(0, 30)+'...' : 'No Prompt'}</p></div><button class="restore-btn" onclick="window.restore('${safeFile}', '${safePrompt}')">Restore</button>`; container.appendChild(div); }); } catch(e) { container.innerHTML = "Error loading history."; } }
+</script>
+</body>
+</html>
