@@ -18,7 +18,6 @@ from PIL import Image
 # 1. CONFIGURATION & SETUP
 # ==============================================================================
 
-# RENDER FIX: Pulls key from Environment Variables to prevent GitHub security kills
 API_KEY = os.environ.get("GITHUB_TOKEN")
 MODEL = "gpt-4o"
 API_URL = "https://models.inference.ai.azure.com/chat/completions"
@@ -98,7 +97,7 @@ def generate_error_excel(error_msg, save_path):
     wb.save(save_path)
 
 # ==============================================================================
-# 4. MATH ENGINE (SHARMA, BLUEORBIT, JAN AUSHADI LOGIC)
+# 4. MATH ENGINE
 # ==============================================================================
 
 def recalculate_math(data):
@@ -302,12 +301,12 @@ def logout():
 
 @app.route("/input")
 def input_page(): 
+    # THE SAFETY CHECK: Explicitly handle Guest vs. Logged In users
     usage = session.get('usage_count', 0)
-    
-    # CRITICAL RENDER FIX: Safety Check for guests
     if current_user.is_authenticated:
         return render_template("input.html", user=current_user, trials_left=None)
     else:
+        # Prevents 'werkzeug.local.LocalProxy object' has no attribute 'name' crash
         return render_template("input.html", user=None, trials_left=3-usage)
 
 @app.route("/process", methods=["POST"])
