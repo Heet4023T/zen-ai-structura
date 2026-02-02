@@ -19,7 +19,7 @@ from PIL import Image
 # ==============================================================================
 
 API_KEY = os.environ.get("GITHUB_TOKEN")
-MODEL = "gpt-4o" 
+MODEL = "gpt-4o"
 API_URL = "https://models.inference.ai.azure.com/chat/completions"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,7 +29,7 @@ LAST_GENERATED_FILE = None
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'FINAL_FULL_CODE_RESTORED_V13_RENDER' 
+app.config['SECRET_KEY'] = 'FINAL_FULL_CODE_RESTORED_V13_RENDER'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=30)
@@ -97,7 +97,7 @@ def generate_error_excel(error_msg, save_path):
     wb.save(save_path)
 
 # ==============================================================================
-# 4. MATH ENGINE (SHARMA, BLUEORBIT, JAN AUSHADI LOGIC)
+# 4. MATH ENGINE
 # ==============================================================================
 
 def recalculate_math(data):
@@ -301,17 +301,13 @@ def logout():
 
 @app.route("/input")
 def input_page(): 
-    # 1. Get the current usage (default to 0 if new visitor)
+    # 1. Get current usage
     usage = session.get('usage_count', 0)
     
-    # 2. Check if user is actually logged in
-    # This is the "Safety Check" that prevents the crash
+    # 2. Safety Check for Template (Handled via if/else)
     if current_user.is_authenticated:
-        # User is logged in, send the actual user object
         return render_template("input.html", user=current_user, trials_left=None)
     else:
-        # No one is logged in, send 'None' for user
-        # This tells the HTML to show "Log In" instead of the Avatar
         return render_template("input.html", user=None, trials_left=3-usage)
 
 @app.route("/process", methods=["POST"])
@@ -339,4 +335,3 @@ def download():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
-
