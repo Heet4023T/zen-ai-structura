@@ -27,13 +27,13 @@ LAST_GENERATED_FILE = None
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'FINAL_FULL_CODE_RESTORED_V13_RENDER' 
+app.config['SECRET_KEY'] = 'ZEN_AI_STRUCTURA_FINAL_V14_SMART_LAYOUT' 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=30)
 
 # ==============================================================================
-# 2. DATABASE & AUTHENTICATION MODELS
+# 2. DATABASE MODELS
 # ==============================================================================
 db = SQLAlchemy(app)
 login_manager = LoginManager()
@@ -79,68 +79,72 @@ def extract_number(value):
     matches = re.findall(r"(-?\d+(?:\.\d+)?)", str(value).replace(",", ""))
     return float(matches[0]) if matches else 0.0
 
-def generate_error_excel(error_msg, save_path):
-    wb = Workbook()
-    ws = wb.active
-    ws['A1'] = "PROCESSING FAILED"
-    ws['A1'].font = Font(color="FF0000", size=14, bold=True)
-    ws['A2'] = str(error_msg)
-    wb.save(save_path)
-
 # ==============================================================================
-# 4. MATH ENGINE (SHARMA, JAN AUSHADI LOGIC)
+# 4. MATH ENGINE (HANDLES BOTH MODES)
 # ==============================================================================
 def recalculate_math(data):
     items = data.get("items", [])
     footer = data.get("footer", {})
+    # LOGIC FIX: Check if layout is explicitly personal
     layout = data.get("layout", "business")
-    is_personal_mode = (layout == "personal")
+    is_personal = (layout == "personal")
     running_total = 0.0
     
     global_tax_pct = 0.0
-    if not is_personal_mode:
-        tax_summary = str(footer.get("tax_summary") or "")
-        global_rates = re.findall(r"(\d+(?:\.\d+)?)", tax_summary)
-        if global_rates:
-            raw_nums = [float(r) for r in global_rates if float(r) <= 50]
-            if raw_nums:
-                s, m = sum(raw_nums), max(raw_nums)
-                global_tax_pct = s if any(abs(s - x) < 0.1 for x in [5,12,18,28]) else m
+    if not is_personal:
+        tax_str = str(footer.get("tax_summary") or "")
+        rates = re.findall(r"(\d+(?:\.\d+)?)", tax_str)
+        if rates:
+            raw = [float(r) for r in rates if float(r) <= 50]
+            if raw:
+                s = sum(raw)
+                global_tax_pct = s if any(abs(s - x) < 0.1 for x in [5,12,18,28]) else max(raw)
         if abs(global_tax_pct - 9.0) < 0.1: global_tax_pct = 18.0
 
     for item in items:
         qty = extract_number(item.get("quantity")) or 1.0
         rate = extract_number(item.get("rate"))
-        disc_pct = extract_number(item.get("discount_percent"))
+        disc = extract_number(item.get("discount_percent"))
         desc = str(item.get("particulars") or "").lower()
 
-        if ("discount" in desc or "less" in desc) and rate > 0: rate = -1 * abs(rate)
+        if ("discount" in desc or "less" in desc) and rate > 0: rate *= -1
         
-        gross_amount = qty * rate
-        discount_amount = gross_amount * (disc_pct / 100.0) if disc_pct > 0 else 0.0
-        taxable_value = gross_amount - discount_amount
+        # MATH: Personal mode doesn't do reverse tax calculation
+        gross = qty * rate
+        taxable = gross * (1 - (disc / 100.0))
         
-        applicable_tax_pct = global_tax_pct
-        tax_amount_val = taxable_value * (applicable_tax_pct / 100.0)
-        final_item_total = taxable_value + tax_amount_val
+        if is_personal:
+            tax_amt = 0
+            final_amt = taxable
+            item["tax_rate"] = "0%"
+        else:
+            tax_amt = taxable * (global_tax_pct / 100.0)
+            final_amt = taxable + tax_amt
+            item["tax_rate"] = f"{int(global_tax_pct)}%"
 
-        item.update({
-            "quantity": qty, "rate": rate, "gross_amount": round(gross_amount, 2),
-            "discount_amount": round(discount_amount, 2), "amount": round(final_item_total, 2)
-        })
-        if not is_personal_mode: item["tax_rate"] = f"{int(applicable_tax_pct)}%"
-        running_total += item["amount"]
+        item.update({"quantity": qty, "rate": rate, "amount": round(final_amt, 2)})
+        running_total += final_amt
 
     footer["total_amount"] = round(running_total, 2)
     return data
 
 # ==============================================================================
-# 5. LLM / AI PARSING LOGIC
+# 5. AI PARSING LOGIC (THE SMART SWITCH)
 # ==============================================================================
 def parse_invoice_vision(image_path, user_instruction=""):
-    base64_image = encode_image(image_path)
-    prompt = f"Extract EVERY detail from this invoice into JSON. USER INSTRUCTION: '{user_instruction}'"
-    payload = {"model": MODEL, "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}]}]}
+    base64_img = encode_image(image_path)
+    
+    # THE FIX: This prompt logic decides layout based on input type
+    prompt = f"""
+    Extract data into JSON.
+    RULES:
+    1. IF input is a Formal Tax Invoice -> Set "layout": "business", "company_name": "SHARMA ENTERPRISES".
+    2. IF input is Informal Text (e.g. "{user_instruction}") OR a handwritten list -> Set "layout": "personal", "company_name": "EXPENSE SHEET".
+    
+    USER INSTRUCTION: '{user_instruction}'
+    """
+    
+    payload = {"model": MODEL, "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}]}]}
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
     
     r = requests.post(API_URL, headers=headers, json=payload, timeout=60)
@@ -149,8 +153,34 @@ def parse_invoice_vision(image_path, user_instruction=""):
     return recalculate_math(json.loads(json_str, strict=False))
 
 # ==============================================================================
-# 6. EXCEL LAYOUTS (EXPANDED LOGIC)
+# 6. EXCEL LAYOUTS (PERSONAL VS BUSINESS)
 # ==============================================================================
+def write_personal_layout(ws, data):
+    items, foot = data.get("items", []), data.get("footer", {})
+    # SIMPLE HEADER (Matches Image 2)
+    ws['A1'] = "EXPENSE SHEET"
+    ws['A1'].font = Font(size=16, bold=True, color="000000")
+    
+    # Simple Columns: Description, Qty, Rate, Amount
+    headers = ["Description", "Quantity", "Rate", "Amount"]
+    widths = [40, 10, 15, 15]
+    
+    for i, (h, w) in enumerate(zip(headers, widths), 1):
+        c = ws.cell(row=4, column=i, value=h)
+        c.font = Font(bold=True)
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    curr = 5
+    for item in items:
+        ws.cell(row=curr, column=1, value=clean(item.get("particulars")))
+        ws.cell(row=curr, column=2, value=item.get("quantity"))
+        ws.cell(row=curr, column=3, value=item.get("rate"))
+        ws.cell(row=curr, column=4, value=item.get("amount"))
+        curr += 1
+    
+    ws.cell(row=curr+1, column=3, value="TOTAL").font = Font(bold=True)
+    ws.cell(row=curr+1, column=4, value=foot.get("total_amount")).font = Font(bold=True)
+
 def write_business_layout(ws, data):
     head, items, foot = data.get("header", {}), data.get("items", []), data.get("footer", {})
     last_col = "H"
@@ -163,7 +193,7 @@ def write_business_layout(ws, data):
     ws['A1'].fill = PatternFill(start_color="FFCC99", end_color="FFCC99", fill_type="solid")
 
     ws.merge_cells(f'A2:{last_col}2')
-    ws['A2'].value = clean(head.get("company_subtext"))
+    ws['A2'].value = clean(head.get("company_subtext")) or "Tax Invoice / GST Extraction"
     ws['A2'].alignment = center
 
     headers = ["S.N.", "Particulars", "HSN/SAC", "Qty", "Rate", "Gross", "Tax %", "Total"]
@@ -180,14 +210,14 @@ def write_business_layout(ws, data):
 
     ws.merge_cells(f'A{curr}:G{curr}')
     ws.cell(row=curr, column=1, value="Total Amount (Inc. GST)").alignment = Alignment(horizontal='right')
-    ws.cell(row=curr, column=8, value=clean(foot.get("total_amount"))).font = Font(bold=True)
-    
+    ws.cell(row=curr, column=8, value=clean(foot.get("total_amount"))).font = Font(bold=True); ws.cell(row=curr, column=8).border = box_border
+
     curr += 1
     ws.merge_cells(f'A{curr}:{last_col}{curr}')
     ws.cell(row=curr, column=1, value=f"Amount in Words: {clean(foot.get('amount_in_words'))}").font = Font(italic=True)
 
 # ==============================================================================
-# 7. ROUTES (WITH SAFETY FIX)
+# 7. ROUTES & RENDER BINDING
 # ==============================================================================
 @app.after_request
 def add_header(response):
@@ -206,40 +236,62 @@ def login():
             login_user(u); return redirect(url_for('input_page'))
     return render_template('login.html')
 
+@app.route("/signup", methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        new_u = User(name=request.form.get('name'), email=request.form.get('email'), gender=request.form.get('gender'),
+                     password=generate_password_hash(request.form.get('password'), method='scrypt'))
+        db.session.add(new_u); db.session.commit()
+        return redirect(url_for('login'))
+    return render_template('signup.html')
+
+@app.route("/logout")
+@login_required
+def logout(): logout_user(); return redirect(url_for('home'))
+
 @app.route("/input")
 def input_page(): 
     usage = session.get('usage_count', 0)
-    # THE CRITICAL SAFETY FIX: Prevents the guest user crash
     if current_user.is_authenticated:
         return render_template("input.html", user=current_user, trials_left=None)
-    else:
-        return render_template("input.html", user=None, trials_left=3-usage)
+    return render_template("input.html", user=None, trials_left=3-usage)
 
 @app.route("/process", methods=["POST"])
 def process():
     if not current_user.is_authenticated and session.get('usage_count', 0) >= 3:
-        return jsonify({"error": "3 trials ended now do log in"}), 403
+        return jsonify({"error": "3 trials ended, please log in"}), 403
     
     file = request.files.get("image")
     prompt_text = request.form.get("prompt", "")
     
-    img_path = os.path.join(UPLOAD_DIR, secure_filename(file.filename) if file else "prompt.png")
+    # Create temp image for prompt-only requests (Zomato fix)
+    img_path = os.path.join(UPLOAD_DIR, secure_filename(file.filename) if file else "prompt_bg.png")
     if file: file.save(img_path)
     else: Image.new('RGB', (100, 100), color='white').save(img_path)
 
     try:
         data = parse_invoice_vision(img_path, prompt_text)
         wb = Workbook(); ws = wb.active
-        write_business_layout(ws, data)
-        save_path = os.path.join(UPLOAD_DIR, "Expense_Data.xlsx")
-        wb.save(save_path); global LAST_GENERATED_FILE; LAST_GENERATED_FILE = save_path
-        if not current_user.is_authenticated: session['usage_count'] = session.get('usage_count', 0) + 1
-        return jsonify({"status": "ok", "filename": "Expense_Data.xlsx", "trials_left": 3-session.get('usage_count', 0)})
+        
+        # SMART LAYOUT SWITCH
+        if data.get("layout") == "personal":
+            write_personal_layout(ws, data)
+        else:
+            write_business_layout(ws, data)
+            
+        save_path = os.path.join(UPLOAD_DIR, "Structura_Data.xlsx"); wb.save(save_path)
+        
+        if current_user.is_authenticated:
+            new_h = History(user_id=current_user.id, filename="Structura_Data.xlsx", prompt=prompt_text)
+            db.session.add(new_h); db.session.commit()
+        else: session['usage_count'] = session.get('usage_count', 0) + 1
+        
+        return jsonify({"status": "ok", "filename": "Structura_Data.xlsx", "trials_left": 3-session.get('usage_count', 0)})
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/download")
 def download():
-    path = os.path.join(UPLOAD_DIR, secure_filename(request.args.get('filename', "Expense_Data.xlsx")))
+    path = os.path.join(UPLOAD_DIR, secure_filename(request.args.get('filename', "Structura_Data.xlsx")))
     return send_file(path, as_attachment=True)
 
 if __name__ == "__main__":
