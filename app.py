@@ -27,7 +27,7 @@ LAST_GENERATED_FILE = None
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'ZEN_AI_STRUCTURA_FINAL_V14_SMART_LAYOUT' 
+app.config['SECRET_KEY'] = 'ZEN_AI_STRUCTURA_FINAL_V15_TEXT_FIX' 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=30)
@@ -80,12 +80,11 @@ def extract_number(value):
     return float(matches[0]) if matches else 0.0
 
 # ==============================================================================
-# 4. MATH ENGINE (HANDLES BOTH MODES)
+# 4. MATH ENGINE
 # ==============================================================================
 def recalculate_math(data):
     items = data.get("items", [])
     footer = data.get("footer", {})
-    # LOGIC FIX: Check if layout is explicitly personal
     layout = data.get("layout", "business")
     is_personal = (layout == "personal")
     running_total = 0.0
@@ -102,18 +101,21 @@ def recalculate_math(data):
         if abs(global_tax_pct - 9.0) < 0.1: global_tax_pct = 18.0
 
     for item in items:
-        qty = extract_number(item.get("quantity")) or 1.0
+        qty = extract_number(item.get("quantity"))
+        # FIX: If qty is 0 but it's personal mode (e.g. "paid 500"), force qty=1
+        if qty == 0: qty = 1.0
+        
         rate = extract_number(item.get("rate"))
         disc = extract_number(item.get("discount_percent"))
         desc = str(item.get("particulars") or "").lower()
 
         if ("discount" in desc or "less" in desc) and rate > 0: rate *= -1
         
-        # MATH: Personal mode doesn't do reverse tax calculation
         gross = qty * rate
         taxable = gross * (1 - (disc / 100.0))
         
         if is_personal:
+            # PERSONAL MODE: No tax, just sum it up
             tax_amt = 0
             final_amt = taxable
             item["tax_rate"] = "0%"
@@ -129,19 +131,30 @@ def recalculate_math(data):
     return data
 
 # ==============================================================================
-# 5. AI PARSING LOGIC (THE SMART SWITCH)
+# 5. AI PARSING LOGIC (TEXT PRIORITY FIX)
 # ==============================================================================
 def parse_invoice_vision(image_path, user_instruction=""):
     base64_img = encode_image(image_path)
     
-    # THE FIX: This prompt logic decides layout based on input type
+    # THE PROMPT FIX: Explicitly tells AI to use text if image is blank
     prompt = f"""
-    Extract data into JSON.
-    RULES:
-    1. IF input is a Formal Tax Invoice -> Set "layout": "business", "company_name": "SHARMA ENTERPRISES".
-    2. IF input is Informal Text (e.g. "{user_instruction}") OR a handwritten list -> Set "layout": "personal", "company_name": "EXPENSE SHEET".
+    You are a Data Extraction AI.
     
-    USER INSTRUCTION: '{user_instruction}'
+    USER TEXT: "{user_instruction}"
+    
+    CRITICAL RULES:
+    1. **CHECK THE TEXT FIRST**: If the user text describes expenses (e.g., "paid 480 to zomato"), IGNORE THE IMAGE if it looks blank/white. Create the data strictly from the text.
+    2. **PERSONAL MODE**: If the input is just a text list of expenses, set "layout": "personal", "company_name": "EXPENSE SHEET".
+       - Map "Zomato" to 'particulars', "480" to 'rate', "1" to 'quantity'.
+    3. **BUSINESS MODE**: Only use this if you see a real Invoice image.
+    
+    JSON STRUCTURE MUST BE:
+    {{
+      "layout": "personal" or "business",
+      "header": {{ "company_name": "EXPENSE SHEET" }},
+      "items": [ {{ "particulars": "Zomato", "quantity": 1, "rate": 480, "amount": 480 }} ],
+      "footer": {{ "total_amount": 0, "amount_in_words": "" }}
+    }}
     """
     
     payload = {"model": MODEL, "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}]}]}
@@ -153,18 +166,15 @@ def parse_invoice_vision(image_path, user_instruction=""):
     return recalculate_math(json.loads(json_str, strict=False))
 
 # ==============================================================================
-# 6. EXCEL LAYOUTS (PERSONAL VS BUSINESS)
+# 6. EXCEL LAYOUTS
 # ==============================================================================
 def write_personal_layout(ws, data):
     items, foot = data.get("items", []), data.get("footer", {})
-    # SIMPLE HEADER (Matches Image 2)
     ws['A1'] = "EXPENSE SHEET"
     ws['A1'].font = Font(size=16, bold=True, color="000000")
     
-    # Simple Columns: Description, Qty, Rate, Amount
     headers = ["Description", "Quantity", "Rate", "Amount"]
     widths = [40, 10, 15, 15]
-    
     for i, (h, w) in enumerate(zip(headers, widths), 1):
         c = ws.cell(row=4, column=i, value=h)
         c.font = Font(bold=True)
@@ -264,16 +274,17 @@ def process():
     file = request.files.get("image")
     prompt_text = request.form.get("prompt", "")
     
-    # Create temp image for prompt-only requests (Zomato fix)
+    # 1. GENERATE TEMP IMAGE FOR PROMPT-ONLY REQUESTS
     img_path = os.path.join(UPLOAD_DIR, secure_filename(file.filename) if file else "prompt_bg.png")
     if file: file.save(img_path)
     else: Image.new('RGB', (100, 100), color='white').save(img_path)
 
     try:
+        # 2. PARSE WITH NEW TEXT-PRIORITY PROMPT
         data = parse_invoice_vision(img_path, prompt_text)
         wb = Workbook(); ws = wb.active
         
-        # SMART LAYOUT SWITCH
+        # 3. CHOOSE LAYOUT BASED ON AI RESPONSE
         if data.get("layout") == "personal":
             write_personal_layout(ws, data)
         else:
