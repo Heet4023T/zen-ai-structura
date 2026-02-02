@@ -301,8 +301,18 @@ def logout():
 
 @app.route("/input")
 def input_page(): 
-    usage = session.get('usage_count', 0) if not current_user.is_authenticated else 0
-    return render_template("input.html", user=current_user, trials_left=3-usage)
+    # 1. Get the current usage (default to 0 if new visitor)
+    usage = session.get('usage_count', 0)
+    
+    # 2. Check if user is actually logged in
+    # This is the "Safety Check" that prevents the crash
+    if current_user.is_authenticated:
+        # User is logged in, send the actual user object
+        return render_template("input.html", user=current_user, trials_left=None)
+    else:
+        # No one is logged in, send 'None' for user
+        # This tells the HTML to show "Log In" instead of the Avatar
+        return render_template("input.html", user=None, trials_left=3-usage)
 
 @app.route("/process", methods=["POST"])
 def process():
@@ -329,3 +339,4 @@ def download():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
+
