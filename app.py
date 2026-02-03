@@ -27,7 +27,8 @@ LAST_GENERATED_FILE = None
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'FINAL_VISUAL_FIX_V19_ROW_HEIGHTS' 
+# Using a fresh secret key
+app.config['SECRET_KEY'] = 'FINAL_VISUAL_FIX_V20_ONE_BOX_DYNAMIC_COLS' 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=30)
@@ -99,15 +100,18 @@ def recalculate_math(data):
     for item in items:
         qty = extract_number(item.get("quantity"))
         rate = extract_number(item.get("rate"))
-        disc = extract_number(item.get("discount_percent"))
+        disc_pct = extract_number(item.get("discount_percent"))
         desc = str(item.get("particulars") or "").lower()
 
         if ("discount" in desc or "less" in desc) and rate > 0: rate *= -1
         if qty == 0 and rate != 0: qty = 1.0
 
         gross = qty * rate
+        discount_amount = 0.0
         if not is_personal_mode:
-            taxable = gross * (1 - (disc / 100.0))
+            if disc_pct > 0:
+                discount_amount = gross * (disc_pct / 100.0)
+            taxable = gross - discount_amount
             tax_amt = taxable * (global_tax_pct / 100.0)
             final_amt = taxable + tax_amt
             item["tax_rate"] = f"{int(global_tax_pct)}%"
@@ -115,34 +119,39 @@ def recalculate_math(data):
             final_amt = gross
             item["tax_rate"] = "0%"
 
-        item.update({"quantity": qty, "rate": rate, "amount": round(final_amt, 2)})
+        item.update({
+            "quantity": qty, 
+            "rate": rate, 
+            "gross_amount": round(gross, 2),
+            "discount_amount": round(discount_amount, 2),
+            "amount": round(final_amt, 2)
+        })
         running_total += final_amt
 
     footer["total_amount"] = round(running_total, 2)
     return data
 
 # ==============================================================================
-# 4. AI PARSING LOGIC (ENHANCED ADDRESS EXTRACTION)
+# 4. AI PARSING LOGIC
 # ==============================================================================
 def parse_invoice_vision(image_path, user_instruction=""):
     base64_img = encode_image(image_path)
     
-    # PROMPT FIX: Explicitly asking for the address line "Immediately below title"
     prompt = f"""
     Extract data into JSON. USER INSTRUCTION: "{user_instruction}"
     
     RULES:
-    1. **PERSONAL**: If input is text only, set "layout": "personal".
-    2. **BUSINESS**: If image, set "layout": "business".
-       - **COMPANY NAME**: Topmost large text (e.g. "Sharma Enterprises").
-       - **SUBTEXT (Address)**: Capture the full address & GSTIN lines found IMMEDIATELY BELOW the Company Name.
-       - **INVOICE NO**: Look for "Inv No" or "Invoice #".
+    1. **PERSONAL**: If input is just text, set "layout": "personal".
+    2. **BUSINESS**: If input is an image, set "layout": "business".
+       - **COMPANY NAME**: Extract top title (e.g. "Sharma Enterprises").
+       - **SUBTEXT**: Extract the full address and GSTIN lines found IMMEDIATELY BELOW the company name.
+       - **INVOICE NO**: Look for "Inv No", "Invoice #".
     
     JSON STRUCTURE:
     {{
       "layout": "business",
       "header": {{ "company_name": null, "company_subtext": null, "gstin": null, "buyer_name": null, "invoice_no": null, "date": null, "bank_details": {{ "bank_name": null, "acc_no": null, "ifsc": null }} }},
-      "items": [ {{ "sn": 1, "particulars": null, "hsn_sac": null, "quantity": 0, "rate": 0, "amount": 0 }} ],
+      "items": [ {{ "sn": 1, "particulars": null, "hsn_sac": null, "quantity": 0, "rate": 0, "discount_percent": 0, "amount": 0 }} ],
       "footer": {{ "tax_summary": "18%", "total_amount": 0, "amount_in_words": null }}
     }}
     """
@@ -156,7 +165,7 @@ def parse_invoice_vision(image_path, user_instruction=""):
     return recalculate_math(json.loads(json_str, strict=False))
 
 # ==============================================================================
-# 5. EXCEL LAYOUTS (FORCED DIMENSIONS)
+# 5. EXCEL LAYOUTS (FIXED: ONE BOX, DYNAMIC COLS, VISIBLE ADDRESS)
 # ==============================================================================
 def draw_box(ws, cell_range, value, font=None, align=None, fill=None, border=None):
     """ Helper to force draw merged cells with styles """
@@ -170,86 +179,142 @@ def draw_box(ws, cell_range, value, font=None, align=None, fill=None, border=Non
         for row in ws[cell_range]:
             for c in row: c.border = border
 
+def set_outer_border(ws, cell_range):
+    """Applies a thick outer border around the entire invoice."""
+    thick = Side(style='medium', color='000000')
+    rows = list(ws[cell_range])
+    
+    # Top and Bottom
+    for cell in rows[0]: cell.border = Border(top=thick, left=cell.border.left, right=cell.border.right, bottom=cell.border.bottom)
+    for cell in rows[-1]: cell.border = Border(top=cell.border.top, left=cell.border.left, right=cell.border.right, bottom=thick)
+    # Left and Right
+    for row in rows: row[0].border = Border(top=row[0].border.top, left=thick, right=row[0].border.right, bottom=row[0].border.bottom)
+    for row in rows: row[-1].border = Border(top=row[-1].border.top, left=row[-1].border.left, right=thick, bottom=row[-1].border.bottom)
+    # Corners
+    rows[0][0].border = Border(top=thick, left=thick, right=rows[0][0].border.right, bottom=rows[0][0].border.bottom)
+    rows[0][-1].border = Border(top=thick, left=rows[0][-1].border.left, right=thick, bottom=rows[0][-1].border.bottom)
+    rows[-1][0].border = Border(top=rows[-1][0].border.top, left=thick, right=rows[-1][0].border.right, bottom=thick)
+    rows[-1][-1].border = Border(top=rows[-1][-1].border.top, left=rows[-1][-1].border.left, right=thick, bottom=thick)
+
 def write_business_layout(ws, data):
     head, items, foot = data.get("header", {}), data.get("items", []), data.get("footer", {})
     
+    # STYLES
     center = Alignment(horizontal='center', vertical='center', wrap_text=True)
     right = Alignment(horizontal='right', vertical='center')
-    left = Alignment(horizontal='left', vertical='center')
-    box_border = Border(left=Side(style='medium'), right=Side(style='medium'), top=Side(style='medium'), bottom=Side(style='medium'))
+    left = Alignment(horizontal='left', vertical='center', wrap_text=True)
+    # Use thin border internally, thick will be applied externally later
+    box_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     
-    # 1. TITLE (FORCED HEIGHT)
-    # Force row height so text isn't squashed
+    # --- DYNAMIC COLUMNS ---
+    has_disc = any(item.get("discount_amount", 0) > 0 for item in items)
+
+    headers = ["S.N.", "Particulars", "HSN/SAC", "Qty", "Rate"]
+    keys = ["sn", "particulars", "hsn_sac", "quantity", "rate"]
+    widths = [6, 35, 12, 8, 12]
+
+    if has_disc:
+        headers.extend(["Gross", "Disc"])
+        keys.extend(["gross_amount", "discount_amount"])
+        widths.extend([12, 10])
+
+    headers.extend(["Tax %", "Total"])
+    keys.extend(["tax_rate", "amount"])
+    widths.extend([10, 15])
+
+    num_cols = len(headers)
+    last_col_let = get_column_letter(num_cols)
+
+    # 1. TITLE (Forced Height)
     ws.row_dimensions[1].height = 35 
     comp_name = clean(head.get("company_name")) or "SHARMA ENTERPRISES"
-    draw_box(ws, 'A1:H1', comp_name, 
+    draw_box(ws, f'A1:{last_col_let}1', comp_name, 
              font=Font(size=22, bold=True), align=center, 
              fill=PatternFill(start_color="FFCC99", end_color="FFCC99", fill_type="solid"), border=box_border)
     
-    # 2. SUBTEXT (FORCED HEIGHT)
-    ws.row_dimensions[2].height = 20
+    # 2. SUBTEXT (FIXED HEIGHT FOR ADDRESS VISIBILITY)
+    ws.row_dimensions[2].height = 35 # Increased height to show 101 MG Road address
     subtext = clean(head.get("company_subtext"))
     if clean(head.get("gstin")) and "GSTIN" not in subtext: 
         subtext += f" | GSTIN: {clean(head.get('gstin'))}"
-    draw_box(ws, 'A2:H2', subtext, align=center, border=box_border)
+    draw_box(ws, f'A2:{last_col_let}2', subtext, align=center, border=box_border)
 
     # 3. DETAILS GRID
-    ws.row_dimensions[3].height = 20; ws.row_dimensions[4].height = 20
-    draw_box(ws, 'A3:D3', f"To: {clean(head.get('buyer_name'))}", font=Font(bold=True), align=left, border=box_border)
-    draw_box(ws, 'E3:H3', f"Inv No: {clean(head.get('invoice_no'))}", font=Font(bold=True), align=center, border=box_border)
-    draw_box(ws, 'A4:D4', clean(head.get('buyer_address')) or "Address", align=left, border=box_border)
-    draw_box(ws, 'E4:H4', f"Date: {clean(head.get('date'))}", align=center, border=box_border)
+    mid = num_cols // 2
+    mid_let = get_column_letter(mid)
+    mid_plus_1_let = get_column_letter(mid + 1)
+
+    ws.row_dimensions[3].height = 25; ws.row_dimensions[4].height = 25
+    draw_box(ws, f'A3:{mid_let}3', f"To: {clean(head.get('buyer_name'))}", font=Font(bold=True), align=left, border=box_border)
+    draw_box(ws, f'{mid_plus_1_let}3:{last_col_let}3', f"Inv No: {clean(head.get('invoice_no'))}", font=Font(bold=True), align=center, border=box_border)
+    draw_box(ws, f'A4:{mid_let}4', clean(head.get('buyer_address')) or "Address", align=left, border=box_border)
+    draw_box(ws, f'{mid_plus_1_let}4:{last_col_let}4', f"Date: {clean(head.get('date'))}", align=center, border=box_border)
 
     # 4. BANK DETAILS
-    ws.row_dimensions[5].height = 20
+    ws.row_dimensions[5].height = 25
     bank = head.get("bank_details", {})
     draw_box(ws, 'A5:B5', "Bank Details:", font=Font(bold=True), align=left, border=box_border)
     bank_str = f"{clean(bank.get('bank_name'))} | A/c: {clean(bank.get('acc_no'))} | IFSC: {clean(bank.get('ifsc'))}"
-    draw_box(ws, 'C5:H5', bank_str, align=left, border=box_border)
+    draw_box(ws, f'C5:{last_col_let}5', bank_str, align=left, border=box_border)
 
-    # 5. TABLE HEADERS
-    headers = ["S.N.", "Particulars", "HSN/SAC", "Qty", "Rate", "Gross", "Tax %", "Total"]
-    for i, h in enumerate(headers, 1):
-        c = ws.cell(row=6, column=i, value=h)
+    # 5. TABLE HEADERS (DYNAMIC)
+    curr_row = 6
+    for i, (h, w) in enumerate(zip(headers, widths), 1):
+        c = ws.cell(row=curr_row, column=i, value=h)
         c.font = Font(bold=True); c.alignment = center; c.border = box_border
-        ws.column_dimensions[get_column_letter(i)].width = 15 if i != 2 else 40
+        ws.column_dimensions[get_column_letter(i)].width = w
     
-    # 6. ITEMS
+    # 6. ITEMS (DYNAMIC KEYS)
     curr = 7
     for item in items:
-        vals = [item.get("sn"), item.get("particulars"), item.get("hsn_sac"), item.get("quantity"), item.get("rate"), item.get("gross_amount"), item.get("tax_rate"), item.get("amount")]
-        for i, val in enumerate(vals, 1):
-            c = ws.cell(row=curr, column=i, value=clean(val)); c.border = box_border
-            c.alignment = right if i in [5,6,8] else (left if i==2 else center)
+        for i, key in enumerate(keys, 1):
+            val = clean(item.get(key))
+            c = ws.cell(row=curr, column=i, value=val); c.border = box_border
+            if key in ["quantity", "rate", "gross_amount", "discount_amount", "amount"]: c.alignment = right
+            elif key == "particulars": c.alignment = left
+            else: c.alignment = center
+        curr += 1
+    
+    # Fill empty rows for visual consistency
+    fill_to = curr + (12 - len(items))
+    while curr < fill_to:
+        for i in range(1, num_cols + 1): ws.cell(row=curr, column=i).border = box_border
         curr += 1
 
     # 7. TOTAL & WORDS
-    draw_box(ws, f'A{curr}:G{curr}', "Total Amount (Inc. GST)", font=Font(bold=True), align=right, border=box_border)
-    ws.cell(row=curr, column=8, value=clean(foot.get("total_amount"))).font = Font(bold=True)
-    ws.cell(row=curr, column=8).border = box_border; ws.cell(row=curr, column=8).alignment = right
+    total_label_range = f'A{curr}:{get_column_letter(num_cols-1)}{curr}'
+    draw_box(ws, total_label_range, "Total Amount (Inc. GST)", font=Font(bold=True), align=right, border=box_border)
+    
+    total_val_cell = ws.cell(row=curr, column=num_cols, value=clean(foot.get("total_amount")))
+    total_val_cell.font = Font(bold=True); total_val_cell.border = box_border; total_val_cell.alignment = right
     
     curr += 1
     ws.row_dimensions[curr].height = 25
-    draw_box(ws, f'A{curr}:H{curr}', f"Amount in Words: {clean(foot.get('amount_in_words'))}", font=Font(italic=True, bold=True), align=left, border=box_border)
+    draw_box(ws, f'A{curr}:{last_col_let}{curr}', f"Amount in Words: {clean(foot.get('amount_in_words'))}", font=Font(italic=True, bold=True), align=left, border=box_border)
     
-    # 8. SIGNATURE BOX (FORCED HEIGHT & BORDER)
+    # 8. SIGNATURE BOX (Taller and inside the main layout)
     curr += 1
-    ws.row_dimensions[curr].height = 50 # TALLER FOR SIGNATURE
+    ws.row_dimensions[curr].height = 50
+    # Use last 3 columns for signature block
+    sig_start_col = num_cols - 2 if num_cols > 3 else 1
+    sig_range = f'{get_column_letter(sig_start_col)}{curr}:{last_col_let}{curr}'
     
-    # Merge cells for signature block
-    sig_range = f'F{curr}:H{curr}'
     ws.merge_cells(sig_range)
-    sig_cell = ws[f'F{curr}']
+    sig_cell = ws[sig_range.split(':')[0]]
     sig_cell.value = "Authorized Signature"
     sig_cell.font = Font(bold=True)
-    # Align bottom-right to look like a signature block
     sig_cell.alignment = Alignment(horizontal='right', vertical='bottom')
     
-    # Draw border around the signature block
+    # Apply inner border to signature box
     for row in ws[sig_range]:
         for c in row: c.border = box_border
 
+    # 9. FINAL STEP: APPLY THICK OUTER BORDER TO THE WHOLE INVOICE
+    full_range = f'A1:{last_col_let}{curr}'
+    set_outer_border(ws, full_range)
+
 def write_personal_layout(ws, data):
+    # (Personal layout remains unchanged as requested)
     items, foot = data.get("items", []), data.get("footer", {})
     ws['A1'] = "EXPENSE SHEET"; ws['A1'].font = Font(size=16, bold=True)
     headers = ["Description", "Quantity", "Rate", "Amount"]
@@ -259,9 +324,9 @@ def write_personal_layout(ws, data):
     curr = 5
     for item in items:
         ws.cell(row=curr, column=1, value=clean(item.get("particulars")))
-        ws.cell(row=curr, column=2, value=item.get("quantity"))
-        ws.cell(row=curr, column=3, value=item.get("rate"))
-        ws.cell(row=curr, column=4, value=item.get("amount"))
+        ws.cell(row=curr, column=2, value=item.get("quantity")))
+        ws.cell(row=curr, column=3, value=item.get("rate")))
+        ws.cell(row=curr, column=4, value=item.get("amount")))
         curr += 1
     ws.cell(row=curr+1, column=3, value="TOTAL").font = Font(bold=True)
     ws.cell(row=curr+1, column=4, value=foot.get("total_amount")).font = Font(bold=True)
