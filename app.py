@@ -27,7 +27,8 @@ LAST_GENERATED_FILE = None
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'FINAL_LAYOUT_AND_MATH_FIX_V23' 
+# Updated Secret Key
+app.config['SECRET_KEY'] = 'FINAL_PERFECT_LAYOUT_V24' 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=30)
@@ -99,7 +100,7 @@ def recalculate_math(data):
     for item in items:
         qty = extract_number(item.get("quantity"))
         rate = extract_number(item.get("rate"))
-        # FIX: If rate is 0 but user gave a total amount, use that as rate
+        # Fallback: if rate is missing but amount exists, use amount as rate
         amt_raw = extract_number(item.get("amount"))
         if rate == 0 and amt_raw > 0: rate = amt_raw
 
@@ -107,12 +108,16 @@ def recalculate_math(data):
         desc = str(item.get("particulars") or "").lower()
 
         if ("discount" in desc or "less" in desc) and rate > 0: rate *= -1
-        # FIX: Default Quantity to 1 if missing
-        if qty == 0: qty = 1.0
+        if qty == 0: qty = 1.0 # Default qty to 1
 
         gross = qty * rate
+        discount_amount = 0.0
+        
         if not is_personal_mode:
-            taxable = gross * (1 - (disc / 100.0))
+            if disc > 0:
+                discount_amount = gross * (disc / 100.0)
+            
+            taxable = gross - discount_amount
             tax_amt = taxable * (global_tax_pct / 100.0)
             final_amt = taxable + tax_amt
             item["tax_rate"] = f"{int(global_tax_pct)}%"
@@ -120,36 +125,40 @@ def recalculate_math(data):
             final_amt = gross
             item["tax_rate"] = "0%"
 
-        item.update({"quantity": qty, "rate": rate, "amount": round(final_amt, 2)})
+        item.update({
+            "quantity": qty, 
+            "rate": rate, 
+            "gross_amount": round(gross, 2),
+            "discount_amount": round(discount_amount, 2),
+            "amount": round(final_amt, 2)
+        })
         running_total += final_amt
 
     footer["total_amount"] = round(running_total, 2)
     return data
 
 # ==============================================================================
-# 4. AI PARSING LOGIC (FIXED: TEXT PRIORITY & EXTRACTION)
+# 4. AI PARSING LOGIC (TEXT PRIORITY)
 # ==============================================================================
 def parse_invoice_vision(image_path, user_instruction=""):
     base64_img = encode_image(image_path)
     
-    # THE FIX: Explicit instructions to handle "paid X" text correctly
     prompt = f"""
     Analyze input. USER TEXT: "{user_instruction}"
     
     RULES:
-    1. **PERSONAL MODE (High Priority)**: If USER TEXT describes expenses (e.g., "paid 480 to zomato", "bought X for 500"), IGNORE the image if it looks blank/generic.
+    1. **PERSONAL MODE (High Priority)**: If USER TEXT describes expenses (e.g., "paid 480 to zomato"), IGNORE the image if it looks blank/generic.
        - SET "layout": "personal".
        - EXTRACT: 'particulars' = "Zomato", 'rate' = 480, 'quantity' = 1.
-       - Do NOT invent company names/addresses.
     
-    2. **BUSINESS MODE**: Only if the IMAGE is a real invoice (with GSTIN, Dates, Title).
+    2. **BUSINESS MODE**: Only if the IMAGE is a real invoice.
        - EXTRACT: Company Name, Address, Invoice No.
     
     JSON STRUCTURE:
     {{
       "layout": "business" OR "personal",
       "header": {{ "company_name": null, "company_subtext": null, "gstin": null, "buyer_name": null, "invoice_no": null, "date": null, "bank_details": {{ "bank_name": null, "acc_no": null, "ifsc": null }} }},
-      "items": [ {{ "sn": 1, "particulars": "Item Name", "hsn_sac": null, "quantity": 1, "rate": 0, "discount_percent": 0, "amount": 0 }} ],
+      "items": [ {{ "sn": 1, "particulars": "Item", "hsn_sac": null, "quantity": 1, "rate": 0, "discount_percent": 0, "amount": 0 }} ],
       "footer": {{ "tax_summary": "18%", "total_amount": 0, "amount_in_words": null }}
     }}
     """
@@ -163,7 +172,7 @@ def parse_invoice_vision(image_path, user_instruction=""):
     return recalculate_math(json.loads(json_str, strict=False))
 
 # ==============================================================================
-# 5. EXCEL LAYOUTS
+# 5. EXCEL LAYOUTS (CLEAN SIGNATURE + VISIBLE ADDRESS)
 # ==============================================================================
 def draw_box(ws, cell_range, value, font=None, align=None, fill=None, border=None):
     ws.merge_cells(cell_range)
@@ -195,6 +204,7 @@ def write_business_layout(ws, data):
     left = Alignment(horizontal='left', vertical='center', wrap_text=True)
     box_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     
+    # DYNAMIC COLUMNS (Gross Fix)
     has_disc = any(item.get("discount_amount", 0) > 0 for item in items)
     headers = ["S.N.", "Particulars", "HSN/SAC", "Qty", "Rate"]
     keys = ["sn", "particulars", "hsn_sac", "quantity", "rate"]
@@ -206,15 +216,18 @@ def write_business_layout(ws, data):
     headers.extend(["Tax %", "Total"]); keys.extend(["tax_rate", "amount"]); widths.extend([10, 15])
     num_cols = len(headers); last_col_let = get_column_letter(num_cols)
 
+    # 1. HEADER
     ws.row_dimensions[1].height = 35 
     comp_name = clean(head.get("company_name")) or "SHARMA ENTERPRISES"
     draw_box(ws, f'A1:{last_col_let}1', comp_name, font=Font(size=22, bold=True), align=center, fill=PatternFill(start_color="FFCC99", end_color="FFCC99", fill_type="solid"), border=box_border)
     
-    ws.row_dimensions[2].height = 45 
+    # 2. SUBTEXT (Increased Height for Visibility)
+    ws.row_dimensions[2].height = 55 # FIXED: Taller for Address
     subtext = clean(head.get("company_subtext"))
     if clean(head.get("gstin")) and "GSTIN" not in subtext: subtext += f" | GSTIN: {clean(head.get('gstin'))}"
     draw_box(ws, f'A2:{last_col_let}2', subtext, align=center, border=box_border)
 
+    # 3. DETAILS GRID
     mid = num_cols // 2; mid_let = get_column_letter(mid); mid_plus_1_let = get_column_letter(mid + 1)
     ws.row_dimensions[3].height = 25; ws.row_dimensions[4].height = 25
     draw_box(ws, f'A3:{mid_let}3', f"To: {clean(head.get('buyer_name'))}", font=Font(bold=True), align=left, border=box_border)
@@ -222,22 +235,26 @@ def write_business_layout(ws, data):
     draw_box(ws, f'A4:{mid_let}4', clean(head.get('buyer_address')) or "Address", align=left, border=box_border)
     draw_box(ws, f'{mid_plus_1_let}4:{last_col_let}4', f"Date: {clean(head.get('date'))}", align=center, border=box_border)
 
+    # 4. BANK DETAILS
     ws.row_dimensions[5].height = 25
     bank = head.get("bank_details", {})
     draw_box(ws, 'A5:B5', "Bank Details:", font=Font(bold=True), align=left, border=box_border)
     bank_str = f"{clean(bank.get('bank_name'))} | A/c: {clean(bank.get('acc_no'))} | IFSC: {clean(bank.get('ifsc'))}"
     draw_box(ws, f'C5:{last_col_let}5', bank_str, align=left, border=box_border)
 
+    # 5. TABLE HEADERS
     curr_row = 6
     for i, (h, w) in enumerate(zip(headers, widths), 1):
         c = ws.cell(row=curr_row, column=i, value=h)
         c.font = Font(bold=True); c.alignment = center; c.border = box_border
         ws.column_dimensions[get_column_letter(i)].width = w
     
+    # 6. ITEMS
     curr = 7
     for item in items:
         for i, key in enumerate(keys, 1):
-            c = ws.cell(row=curr, column=i, value=clean(item.get(key))); c.border = box_border
+            val = clean(item.get(key))
+            c = ws.cell(row=curr, column=i, value=val); c.border = box_border
             c.alignment = right if key in ["quantity", "rate", "gross_amount", "discount_amount", "amount"] else (left if key == "particulars" else center)
         curr += 1
     
@@ -246,23 +263,31 @@ def write_business_layout(ws, data):
         for i in range(1, num_cols + 1): ws.cell(row=curr, column=i).border = box_border
         curr += 1
 
+    # 7. TOTAL & WORDS
     draw_box(ws, f'A{curr}:{get_column_letter(num_cols-1)}{curr}', "Total Amount (Inc. GST)", font=Font(bold=True), align=right, border=box_border)
     total_cell = ws.cell(row=curr, column=num_cols, value=clean(foot.get("total_amount")))
     total_cell.font = Font(bold=True); total_cell.border = box_border; total_cell.alignment = right
     
-    curr += 1; ws.row_dimensions[curr].height = 25
+    curr += 1
+    ws.row_dimensions[curr].height = 25
     draw_box(ws, f'A{curr}:{last_col_let}{curr}', f"Amount in Words: {clean(foot.get('amount_in_words'))}", font=Font(italic=True, bold=True), align=left, border=box_border)
     
-    curr += 1; ws.row_dimensions[curr].height = 60
+    # 8. SIGNATURE (CLEAN LEFT SIDE)
+    curr += 1
+    ws.row_dimensions[curr].height = 60
     sig_start = num_cols - 2 if num_cols > 3 else 1
     sig_range = f'{get_column_letter(sig_start)}{curr}:{last_col_let}{curr}'
+    
+    # MERGE & BORDER THE EMPTY SPACE (One Clean Box)
+    empty_space_range = f'A{curr}:{get_column_letter(sig_start-1)}{curr}'
+    draw_box(ws, empty_space_range, "", border=box_border) # Creates one clean empty box
+    
+    # SIGNATURE BOX
     draw_box(ws, sig_range, "Authorized Signature", font=Font(bold=True), align=Alignment(horizontal='right', vertical='bottom'), border=box_border)
-    for col in range(1, sig_start): ws.cell(row=curr, column=col).border = box_border
 
     set_outer_border(ws, f'A1:{last_col_let}{curr}')
 
 def write_personal_layout(ws, data):
-    # SIMPLE LAYOUT (Image 1)
     items, foot = data.get("items", []), data.get("footer", {})
     ws['A1'] = "EXPENSE SHEET"; ws['A1'].font = Font(size=16, bold=True)
     headers = ["Description", "Quantity", "Rate", "Amount"]
