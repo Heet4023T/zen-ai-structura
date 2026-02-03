@@ -27,7 +27,7 @@ LAST_GENERATED_FILE = None
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'FINAL_SYNTAX_FIXED_V20' 
+app.config['SECRET_KEY'] = 'FINAL_LAYOUT_SWITCHING_FIX_V21' 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(days=30)
@@ -133,27 +133,33 @@ def recalculate_math(data):
     return data
 
 # ==============================================================================
-# 4. AI PARSING LOGIC
+# 4. AI PARSING LOGIC (FIXED LAYOUT SWITCHING)
 # ==============================================================================
 def parse_invoice_vision(image_path, user_instruction=""):
     base64_img = encode_image(image_path)
     
+    # UPDATED PROMPT: STRICTER RULES FOR PERSONAL VS BUSINESS
     prompt = f"""
-    Extract data into JSON. USER INSTRUCTION: "{user_instruction}"
+    Analyze the input and extract data into JSON. 
+    USER INSTRUCTION: "{user_instruction}"
     
-    RULES:
-    1. **PERSONAL**: If input is just text like "paid 500", set "layout": "personal".
-    2. **BUSINESS**: If input is an image, set "layout": "business".
-       - **COMPANY NAME**: Extract top title (e.g., "Sharma Enterprises").
+    CRITICAL LAYOUT RULES (PRIORITY):
+    1. **PERSONAL MODE (STRICT)**: If the USER INSTRUCTION contains phrases like "paid to", "bought from", "spent on", or is a simple list of items/expenses, YOU MUST SET "layout": "personal". 
+       - In this mode, DO NOT extract any company names, addresses, GSTINs, or bank details. Leave the "header" object completely null.
+    
+    2. **BUSINESS MODE**: Only set "layout": "business" if the image clearly contains a formal invoice header, such as a distinct Company Title (e.g., "Sharma Enterprises"), "Tax Invoice", "GSTIN", or detailed address blocks.
+
+    EXTRACTION IF BUSINESS MODE:
+       - **COMPANY NAME**: Extract top title.
        - **SUBTEXT**: Extract address/GSTIN lines IMMEDIATELY BELOW the title.
        - **INVOICE NO**: Look for "Inv No", "Invoice #".
     
     JSON STRUCTURE:
     {{
-      "layout": "business",
+      "layout": "business" OR "personal",
       "header": {{ "company_name": null, "company_subtext": null, "gstin": null, "buyer_name": null, "invoice_no": null, "date": null, "bank_details": {{ "bank_name": null, "acc_no": null, "ifsc": null }} }},
       "items": [ {{ "sn": 1, "particulars": null, "hsn_sac": null, "quantity": 0, "rate": 0, "discount_percent": 0, "amount": 0 }} ],
-      "footer": {{ "tax_summary": "18%", "total_amount": 0, "amount_in_words": null }}
+      "footer": {{ "tax_summary": null, "total_amount": 0, "amount_in_words": null }}
     }}
     """
     
@@ -166,7 +172,7 @@ def parse_invoice_vision(image_path, user_instruction=""):
     return recalculate_math(json.loads(json_str, strict=False))
 
 # ==============================================================================
-# 5. EXCEL LAYOUTS (FIXED: ONE BOX + DYNAMIC COLS + SYNTAX ERROR)
+# 5. EXCEL LAYOUTS (FIXED PERSONAL LAYOUT)
 # ==============================================================================
 def draw_box(ws, cell_range, value, font=None, align=None, fill=None, border=None):
     ws.merge_cells(cell_range)
@@ -180,7 +186,6 @@ def draw_box(ws, cell_range, value, font=None, align=None, fill=None, border=Non
             for c in row: c.border = border
 
 def set_outer_border(ws, cell_range):
-    """Draws a thick box around the entire invoice content"""
     thick = Side(style='medium', color='000000')
     rows = list(ws[cell_range])
     for cell in rows[0]: cell.border = Border(top=thick, left=cell.border.left, right=cell.border.right, bottom=cell.border.bottom)
@@ -194,16 +199,12 @@ def set_outer_border(ws, cell_range):
 
 def write_business_layout(ws, data):
     head, items, foot = data.get("header", {}), data.get("items", []), data.get("footer", {})
-    
-    # STYLES
     center = Alignment(horizontal='center', vertical='center', wrap_text=True)
     right = Alignment(horizontal='right', vertical='center')
     left = Alignment(horizontal='left', vertical='center', wrap_text=True)
     box_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     
-    # --- DYNAMIC COLUMNS (GROSS FIX) ---
     has_disc = any(item.get("discount_amount", 0) > 0 for item in items)
-
     headers = ["S.N.", "Particulars", "HSN/SAC", "Qty", "Rate"]
     keys = ["sn", "particulars", "hsn_sac", "quantity", "rate"]
     widths = [6, 35, 12, 8, 12]
@@ -216,52 +217,36 @@ def write_business_layout(ws, data):
     headers.extend(["Tax %", "Total"])
     keys.extend(["tax_rate", "amount"])
     widths.extend([10, 15])
-
     num_cols = len(headers)
     last_col_let = get_column_letter(num_cols)
 
-    # 1. ORANGE HEADER (FORCED)
     ws.row_dimensions[1].height = 35 
     comp_name = clean(head.get("company_name")) or "SHARMA ENTERPRISES"
-    draw_box(ws, f'A1:{last_col_let}1', comp_name, 
-             font=Font(size=22, bold=True), align=center, 
-             fill=PatternFill(start_color="FFCC99", end_color="FFCC99", fill_type="solid"), border=box_border)
-    
-    # 2. SUBTEXT (Increased Height for Address)
-    ws.row_dimensions[2].height = 45 # FIX: Taller for "101 MG Road..."
+    draw_box(ws, f'A1:{last_col_let}1', comp_name, font=Font(size=22, bold=True), align=center, fill=PatternFill(start_color="FFCC99", end_color="FFCC99", fill_type="solid"), border=box_border)
+    ws.row_dimensions[2].height = 45
     subtext = clean(head.get("company_subtext"))
-    if clean(head.get("gstin")) and "GSTIN" not in subtext: 
-        subtext += f" | GSTIN: {clean(head.get('gstin'))}"
+    if clean(head.get("gstin")) and "GSTIN" not in subtext: subtext += f" | GSTIN: {clean(head.get('gstin'))}"
     draw_box(ws, f'A2:{last_col_let}2', subtext, align=center, border=box_border)
 
-    # 3. DETAILS GRID
-    mid = num_cols // 2
-    mid_let = get_column_letter(mid)
-    mid_plus_1_let = get_column_letter(mid + 1)
-
-    ws.row_dimensions[3].height = 25
+    mid = num_cols // 2; mid_let = get_column_letter(mid); mid_plus_1_let = get_column_letter(mid + 1)
+    ws.row_dimensions[3].height = 25; ws.row_dimensions[4].height = 25
     draw_box(ws, f'A3:{mid_let}3', f"To: {clean(head.get('buyer_name'))}", font=Font(bold=True), align=left, border=box_border)
     draw_box(ws, f'{mid_plus_1_let}3:{last_col_let}3', f"Inv No: {clean(head.get('invoice_no'))}", font=Font(bold=True), align=center, border=box_border)
-    
-    ws.row_dimensions[4].height = 25
     draw_box(ws, f'A4:{mid_let}4', clean(head.get('buyer_address')) or "Address", align=left, border=box_border)
     draw_box(ws, f'{mid_plus_1_let}4:{last_col_let}4', f"Date: {clean(head.get('date'))}", align=center, border=box_border)
 
-    # 4. BANK DETAILS
     ws.row_dimensions[5].height = 25
     bank = head.get("bank_details", {})
     draw_box(ws, 'A5:B5', "Bank Details:", font=Font(bold=True), align=left, border=box_border)
     bank_str = f"{clean(bank.get('bank_name'))} | A/c: {clean(bank.get('acc_no'))} | IFSC: {clean(bank.get('ifsc'))}"
     draw_box(ws, f'C5:{last_col_let}5', bank_str, align=left, border=box_border)
 
-    # 5. TABLE HEADERS
     curr_row = 6
     for i, (h, w) in enumerate(zip(headers, widths), 1):
         c = ws.cell(row=curr_row, column=i, value=h)
         c.font = Font(bold=True); c.alignment = center; c.border = box_border
         ws.column_dimensions[get_column_letter(i)].width = w
     
-    # 6. ITEMS
     curr = 7
     for item in items:
         for i, key in enumerate(keys, 1):
@@ -271,14 +256,12 @@ def write_business_layout(ws, data):
             elif key == "particulars": c.alignment = left
             else: c.alignment = center
         curr += 1
-
-    # Fill empty rows
+    
     fill_to = curr + (12 - len(items))
     while curr < fill_to:
         for i in range(1, num_cols + 1): ws.cell(row=curr, column=i).border = box_border
         curr += 1
 
-    # 7. TOTAL
     draw_box(ws, f'A{curr}:{get_column_letter(num_cols-1)}{curr}', "Total Amount (Inc. GST)", font=Font(bold=True), align=right, border=box_border)
     total_cell = ws.cell(row=curr, column=num_cols, value=clean(foot.get("total_amount")))
     total_cell.font = Font(bold=True); total_cell.border = box_border; total_cell.alignment = right
@@ -287,49 +270,34 @@ def write_business_layout(ws, data):
     ws.row_dimensions[curr].height = 25
     draw_box(ws, f'A{curr}:{last_col_let}{curr}', f"Amount in Words: {clean(foot.get('amount_in_words'))}", font=Font(italic=True, bold=True), align=left, border=box_border)
     
-    # 8. SIGNATURE (Inside the box now)
     curr += 1
     ws.row_dimensions[curr].height = 60
-    # Merge last 3 columns for signature
     sig_start = num_cols - 2 if num_cols > 3 else 1
     sig_range = f'{get_column_letter(sig_start)}{curr}:{last_col_let}{curr}'
-    
-    ws.merge_cells(sig_range)
-    sig_cell = ws[sig_range.split(':')[0]]
-    sig_cell.value = "Authorized Signature"
-    sig_cell.font = Font(bold=True)
-    sig_cell.alignment = Alignment(horizontal='right', vertical='bottom')
-    
-    # Fill remaining borders for that row
-    for col in range(1, num_cols + 1):
-        # We need borders on all cells in this last row to complete the box
-        if col < sig_start:
-             ws.cell(row=curr, column=col).border = box_border
-        else:
-             # Ensure the merged signature cells have borders
-             pass 
-    
-    # 9. ONE BIG OUTER BORDER (The Final Fix)
-    full_range = f'A1:{last_col_let}{curr}'
-    set_outer_border(ws, full_range)
+    draw_box(ws, sig_range, "Authorized Signature", font=Font(bold=True), align=Alignment(horizontal='right', vertical='bottom'), border=box_border)
+    for col in range(1, sig_start): ws.cell(row=curr, column=col).border = box_border
+
+    set_outer_border(ws, f'A1:{last_col_let}{curr}')
 
 def write_personal_layout(ws, data):
+    # This is the clean layout from Image 1
     items, foot = data.get("items", []), data.get("footer", {})
     ws['A1'] = "EXPENSE SHEET"; ws['A1'].font = Font(size=16, bold=True)
     headers = ["Description", "Quantity", "Rate", "Amount"]
-    for i, h in enumerate(headers, 1):
-        ws.cell(row=4, column=i, value=h).font = Font(bold=True)
-        ws.column_dimensions[get_column_letter(i)].width = 20 if i!=1 else 40
-    curr = 5
+    widths = [40, 10, 15, 15]
+    for i, (h, w) in enumerate(zip(headers, widths), 1):
+        c = ws.cell(row=3, column=i, value=h); c.font = Font(bold=True)
+        c.border = Border(bottom=Side(style='thin'))
+        ws.column_dimensions[get_column_letter(i)].width = w
+    curr = 4
     for item in items:
-        # SYNTAX ERROR FIXED HERE: Removed extra ')'
         ws.cell(row=curr, column=1, value=clean(item.get("particulars")))
-        ws.cell(row=curr, column=2, value=item.get("quantity")) 
-        ws.cell(row=curr, column=3, value=item.get("rate"))
-        ws.cell(row=curr, column=4, value=item.get("amount"))
+        ws.cell(row=curr, column=2, value=item.get("quantity")).alignment = Alignment(horizontal='right')
+        ws.cell(row=curr, column=3, value=item.get("rate")).alignment = Alignment(horizontal='right')
+        ws.cell(row=curr, column=4, value=item.get("amount")).alignment = Alignment(horizontal='right')
         curr += 1
-    ws.cell(row=curr+1, column=3, value="TOTAL").font = Font(bold=True)
-    ws.cell(row=curr+1, column=4, value=foot.get("total_amount")).font = Font(bold=True)
+    ws.cell(row=curr+1, column=3, value="TOTAL").font = Font(bold=True); ws.cell(row=curr+1, column=3).alignment = Alignment(horizontal='right')
+    ws.cell(row=curr+1, column=4, value=foot.get("total_amount")).font = Font(bold=True); ws.cell(row=curr+1, column=4).alignment = Alignment(horizontal='right')
 
 # ==============================================================================
 # 6. ROUTES
@@ -386,6 +354,7 @@ def process():
     try:
         data = parse_invoice_vision(img_path, prompt_text)
         wb = Workbook(); ws = wb.active
+        # The crucial switch based on the AI's determination
         if data.get("layout") == "personal": write_personal_layout(ws, data)
         else: write_business_layout(ws, data)
         
